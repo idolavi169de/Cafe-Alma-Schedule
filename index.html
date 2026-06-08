@@ -251,6 +251,7 @@ const App = (() => {
     selectedDay: null,
     _scheduleCache: null,
     employerPasswordError: false,
+    exportSelectedWorker: null,
   };
 
   /* ── Helpers ── */
@@ -804,24 +805,60 @@ const App = (() => {
 
   /* ── Export Tab ── */
   function renderExport() {
+    const sel = state.exportSelectedWorker;
+
+    // Per-employee card content
+    let perEmpCard = '';
+    if (!state.workers.length) {
+      perEmpCard = `<p style="font-size:0.87rem;color:#9a8068;">No submissions yet.</p>`;
+    } else if (!sel) {
+      // Step 1: show name list
+      perEmpCard = `
+        <p style="font-size:0.85rem;color:#9a8068;margin-bottom:12px;">Choose an employee:</p>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          ${state.workers.map(w => `
+            <button onclick="App.selectExportWorker('${w.name.replace(/'/g,"\\'")}')"
+              style="text-align:left;background:#faf7f0;border:1.5px solid #d4c9b0;border-radius:9px;padding:11px 16px;cursor:pointer;font-size:0.92rem;font-weight:600;color:#2c1a0e;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:10px;transition:border-color .15s;"
+              onmouseover="this.style.borderColor='#3d6b2e'" onmouseout="this.style.borderColor='#d4c9b0'">
+              <span style="font-size:1.1rem;">👤</span> ${w.name}
+              <span style="margin-left:auto;font-size:0.78rem;color:#9a8068;font-weight:400;">${w.contractHours}h/wk</span>
+            </button>`).join('')}
+        </div>`;
+    } else {
+      // Step 2: show export options for selected worker
+      perEmpCard = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+          <button onclick="App.selectExportWorker(null)" style="background:#e4ddd0;border:none;border-radius:7px;padding:5px 12px;cursor:pointer;font-size:0.82rem;font-weight:600;color:#5a3e28;font-family:'Inter',sans-serif;">← Back</button>
+          <span style="font-size:1rem;font-weight:700;color:#2c1a0e;">👤 ${sel}</span>
+        </div>
+        <p style="font-size:0.85rem;color:#9a8068;margin-bottom:14px;">Export ${sel}'s personal schedule as:</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-green" onclick="App.exportOneEmployee('${sel.replace(/'/g,"\\'")}', 'pdf')">📄 PDF — Personal Diary</button>
+          <button class="btn btn-amber" onclick="App.exportOneEmployee('${sel.replace(/'/g,"\\'")}', 'excel')">📊 Excel Sheet</button>
+        </div>`;
+    }
+
     return `
       <div class="section-title">Export Options</div>
-      <div style="display:flex;flex-direction:column;gap:14px;max-width:420px;">
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:460px;">
+
         <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
-          <h3 style="margin-bottom:8px;">📊 Excel — Full Dienstplan</h3>
+          <h3 style="margin-bottom:8px;">📊 Full Dienstplan — Excel</h3>
           <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Complete schedule grid for the month — ready to share on Telegram.</p>
           <button class="btn btn-green" onclick="App.exportExcel()">⬇ Download Excel</button>
         </div>
+
         <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
-          <h3 style="margin-bottom:8px;">👤 Excel — Per Employee</h3>
-          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">One sheet per employee — each person's personal schedule for the month, clearly laid out.</p>
-          <button class="btn btn-amber" onclick="App.exportPerEmployee()">⬇ Download Per Employee</button>
+          <h3 style="margin-bottom:14px;">👤 Personal Schedule — Per Employee</h3>
+          ${perEmpCard}
         </div>
+
         <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
-          <h3 style="margin-bottom:8px;">📄 PDF Report</h3>
-          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Full report with submissions, conflicts, and the Dienstplan.</p>
+          <h3 style="margin-bottom:8px;">📄 Full Report — PDF</h3>
+          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">All submissions, conflicts, and the full Dienstplan in one document.</p>
           <button class="btn btn-blue" onclick="App.exportPDF()">⬇ Download PDF</button>
         </div>
+
       </div>`;
   }
 
@@ -1014,67 +1051,211 @@ const App = (() => {
   }
 
   /* ── Per-Employee Export ── */
-  function exportPerEmployee() {
-    if (typeof XLSX === 'undefined') { alert('Excel library not loaded. Check internet connection.'); return; }
-    if (!state.workers.length) { alert('No submissions yet.'); return; }
+  function selectExportWorker(name) {
+    state.exportSelectedWorker = name;
+    render();
+  }
 
+  function _buildWorkerShifts(workerName) {
+    const worker      = state.workers.find(w => w.name === workerName);
+    if (!worker) return null;
     const { schedule } = generateSchedule();
     const workingDays  = getWorkingDays();
+    const target       = Math.round((worker.contractHours * 4.33) / 8);
+    const shifts       = [];
+    const daysOff      = (worker.unavailableDays || []).sort((a,b)=>a-b);
+
+    for (const d of workingDays) {
+      const dow = getDow(d);
+      const cfg = DOW_CONFIG[dow];
+      if (!cfg || !cfg.open) continue;
+      const entry = schedule[d];
+      if (!entry || !entry.slots) continue;
+      const assignedSlot = Object.entries(entry.slots).find(([,n]) => n === workerName);
+      if (assignedSlot) {
+        const [key] = assignedSlot;
+        const slotDef = cfg.slots.find(s => s.key === key);
+        shifts.push({ d, dow, label: slotDef?.label || key, time: slotDef?.time || '' });
+      }
+    }
+    return { worker, shifts, daysOff, target };
+  }
+
+  function exportOneEmployee(workerName, format) {
+    const data = _buildWorkerShifts(workerName);
+    if (!data) return;
+    if (format === 'pdf') exportEmployeePDF(data);
+    else exportEmployeeExcel(data);
+  }
+
+  function exportEmployeePDF(data) {
+    const { worker, shifts, daysOff, target } = data;
+    const ml = monthLabel();
+    const totalHours = shifts.length * 8;
+    const prefEntries = Object.entries(worker.preferences || {});
+
+    const shiftRows = shifts.map((s, i) => `
+      <div class="shift-row ${i%2===0?'even':'odd'}">
+        <div class="col-date">${s.d} ${MONTH_NAMES[tm.month].substring(0,3)}</div>
+        <div class="col-day">${DAY_NAMES[s.dow]}</div>
+        <div class="col-shift">${s.label}</div>
+        <div class="col-time">${s.time ? '🕗 ' + s.time : ''}</div>
+      </div>`).join('');
+
+    const offRows = daysOff.map(d => {
+      const dow = getDow(d);
+      return `<div class="off-row">
+        <span style="margin-right:10px;">🚫</span>
+        <span style="font-weight:600;">${d} ${MONTH_NAMES[tm.month].substring(0,3)}</span>
+        <span style="margin-left:8px;color:#9a8068;">${DAY_NAMES[dow]}</span>
+        <span style="margin-left:auto;font-size:0.8rem;color:#8b3a2a;">Day Off</span>
+      </div>`;
+    }).join('');
+
+    const prefRows = prefEntries.length ? prefEntries.map(([d,s]) =>
+      `<span style="display:inline-block;background:#eef5e8;color:#2a4a1c;border-radius:20px;padding:3px 10px;font-size:0.8rem;font-weight:600;margin:3px;">Day ${d}: ${slotLabel(s)}</span>`
+    ).join('') : '<span style="color:#c8b898;font-size:0.85rem;font-style:italic;">No preferences set</span>';
+
+    const fulfillPct = target > 0 ? Math.round((shifts.length / target) * 100) : 0;
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>${worker.name} — ${ml}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap');
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:'Inter',sans-serif;background:#faf7f0;color:#2c1a0e;padding:0;max-width:580px;margin:0 auto;}
+
+      .header{background:linear-gradient(135deg,#2a4a1c 0%,#3d6b2e 100%);padding:36px 32px 28px;color:white;text-align:center;}
+      .cafe-label{font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:0.7;margin-bottom:12px;}
+      .worker-name{font-family:'Lora',serif;font-size:34px;font-weight:700;margin-bottom:4px;}
+      .month-tag{font-size:15px;opacity:0.8;font-style:italic;font-family:'Lora',serif;}
+      .mug-icon{font-size:28px;margin-bottom:10px;}
+
+      .tagline{text-align:center;padding:16px 24px;background:#f5f0e8;font-style:italic;color:#7a5c3a;font-family:'Lora',serif;font-size:13px;border-bottom:1px solid #e8e0d0;}
+
+      .body{padding:24px 28px;}
+
+      .section-hd{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#9a8068;margin:22px 0 10px;display:flex;align-items:center;gap:8px;}
+      .section-hd::after{content:'';flex:1;height:1px;background:#e8e0d0;}
+
+      .shift-row{display:flex;align-items:center;padding:11px 14px;border-radius:8px;margin-bottom:6px;font-size:13px;}
+      .even{background:#f0f7e8;} .odd{background:#faf7f0;}
+      .col-date{width:80px;font-weight:700;color:#2c1a0e;}
+      .col-day{width:70px;color:#7a5c3a;font-size:12px;}
+      .col-shift{flex:1;font-weight:600;color:#2a4a1c;}
+      .col-time{color:#9a8068;font-size:12px;}
+
+      .off-row{display:flex;align-items:center;padding:9px 14px;background:#fdf5f3;border-radius:8px;margin-bottom:5px;font-size:13px;}
+
+      .prefs-box{background:#fdf9f3;border:1px solid #e8e0d0;border-radius:10px;padding:14px 16px;font-size:12px;}
+
+      .summary{background:linear-gradient(135deg,#2a4a1c,#3d6b2e);border-radius:12px;padding:24px 28px;margin-top:24px;color:white;}
+      .sum-title{font-family:'Lora',serif;font-size:14px;font-weight:700;margin-bottom:18px;opacity:0.85;}
+      .sum-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+      .sum-item{}
+      .sum-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;opacity:0.65;margin-bottom:4px;}
+      .sum-value{font-size:26px;font-weight:700;font-family:'Lora',serif;}
+      .sum-sub{font-size:11px;opacity:0.6;margin-top:2px;}
+      .fulfil-bar{background:rgba(255,255,255,0.2);border-radius:99px;height:6px;margin-top:14px;}
+      .fulfil-fill{background:rgba(255,255,255,0.85);border-radius:99px;height:6px;width:${Math.min(fulfillPct,100)}%;}
+
+      .footer{text-align:center;padding:18px;font-size:10px;color:#c8b898;border-top:1px solid #e8e0d0;margin-top:8px;}
+      @media print{body{background:white;max-width:100%;} .header{-webkit-print-color-adjust:exact;print-color-adjust:exact;} .summary{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+    </style></head><body>
+
+    <div class="header">
+      <div class="mug-icon">☕</div>
+      <div class="cafe-label">Cafe Alma</div>
+      <div class="worker-name">${worker.name}</div>
+      <div class="month-tag">${ml}</div>
+    </div>
+
+    <div class="tagline">Your personal schedule for the month — keep it handy ☕</div>
+
+    <div class="body">
+
+      <div class="section-hd">Your Shifts · ${shifts.length} total</div>
+      ${shiftRows || '<p style="color:#c8b898;font-style:italic;font-size:13px;">No shifts assigned yet.</p>'}
+
+      ${daysOff.length ? `
+        <div class="section-hd">Days Off · ${daysOff.length}</div>
+        ${offRows}` : ''}
+
+      ${prefEntries.length ? `
+        <div class="section-hd">Your Preferences</div>
+        <div class="prefs-box">${prefRows}</div>` : ''}
+
+      <div class="summary">
+        <div class="sum-title">Monthly Overview</div>
+        <div class="sum-grid">
+          <div class="sum-item">
+            <div class="sum-label">Shifts Assigned</div>
+            <div class="sum-value">${shifts.length}</div>
+            <div class="sum-sub">of ~${target} target</div>
+          </div>
+          <div class="sum-item">
+            <div class="sum-label">Approx. Hours</div>
+            <div class="sum-value">${totalHours}h</div>
+            <div class="sum-sub">${worker.contractHours}h/week contract</div>
+          </div>
+          <div class="sum-item">
+            <div class="sum-label">Days Off</div>
+            <div class="sum-value">${daysOff.length}</div>
+            <div class="sum-sub">requested this month</div>
+          </div>
+          <div class="sum-item">
+            <div class="sum-label">Fulfillment</div>
+            <div class="sum-value">${fulfillPct}%</div>
+            <div class="sum-sub">of monthly target</div>
+          </div>
+        </div>
+        <div class="fulfil-bar"><div class="fulfil-fill"></div></div>
+      </div>
+
+    </div>
+    <div class="footer">Cafe Alma Shift Scheduler · Generated ${new Date().toLocaleDateString()}</div>
+    <script>window.onload=function(){window.print();}<\/script>
+    </body></html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Please allow pop-ups for this page.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+
+  function exportEmployeeExcel(data) {
+    if (typeof XLSX === 'undefined') { alert('Excel library not loaded.'); return; }
+    const { worker, shifts, daysOff, target } = data;
+    const ml = monthLabel();
     const wb = XLSX.utils.book_new();
 
-    for (const worker of state.workers) {
-      const target = Math.round((worker.contractHours * 4.33) / 8);
+    const rows = [
+      ['☕ Cafe Alma — Personal Schedule'],
+      [worker.name],
+      [ml],
+      [],
+      ['CONTRACT', `${worker.contractHours}h / week`, '', 'TARGET SHIFTS', `~${target} / month`],
+      [],
+      ['Date', 'Day', 'Shift', 'Arrival', 'Status'],
+      ...shifts.map(s => [`${s.d} ${MONTH_NAMES[tm.month]}`, DAY_NAMES[s.dow], s.label, s.time, '✓ Working']),
+      ...(daysOff.length ? [
+        [],
+        ['DAYS OFF', '', '', '', ''],
+        ...daysOff.map(d => [`${d} ${MONTH_NAMES[tm.month]}`, DAY_NAMES[getDow(d)], '—', '—', 'Day Off']),
+      ] : []),
+      [],
+      ['SUMMARY', '', '', '', ''],
+      ['Total shifts assigned', shifts.length, '', 'Approx. hours', shifts.length * 8 + 'h'],
+      ['Days off requested', daysOff.length, '', 'Fulfillment', `${target > 0 ? Math.round((shifts.length/target)*100) : 0}%`],
+      [],
+      [`Generated by Cafe Alma Shift Scheduler · ${new Date().toLocaleDateString()}`],
+    ];
 
-      // Build this employee's personal shift list
-      const rows = [];
-      rows.push([`Cafe Alma — ${monthLabel()}`]);
-      rows.push([`Employee: ${worker.name}`]);
-      rows.push([`Contract: ${worker.contractHours}h/week  |  Target: ~${target} shifts/month`]);
-      rows.push([]);
-      rows.push(['Date', 'Day', 'Shift', 'Arrival Time', 'Status']);
-
-      let assignedCount = 0;
-      for (const d of workingDays) {
-        const dow = getDow(d);
-        const cfg = DOW_CONFIG[dow];
-        if (!cfg || !cfg.open) continue;
-
-        const entry = schedule[d];
-        if (!entry || !entry.slots) continue;
-
-        // Find if this worker is assigned any slot this day
-        const assignedSlot = Object.entries(entry.slots).find(([,name]) => name === worker.name);
-        const isOff = (worker.unavailableDays||[]).includes(d);
-
-        if (assignedSlot) {
-          const [slotKey] = assignedSlot;
-          const slotDef = cfg.slots.find(s => s.key === slotKey);
-          rows.push([
-            `${d} ${MONTH_NAMES[tm.month]}`,
-            DAY_NAMES[dow],
-            slotDef ? slotDef.label : slotKey,
-            slotDef ? slotDef.time : '',
-            '✓ Assigned',
-          ]);
-          assignedCount++;
-        } else if (isOff) {
-          rows.push([`${d} ${MONTH_NAMES[tm.month]}`, DAY_NAMES[dow], '—', '—', 'Day Off']);
-        }
-      }
-
-      rows.push([]);
-      rows.push([`Total shifts assigned: ${assignedCount} / ${target} target`]);
-      rows.push([`Total approx. hours: ${assignedCount * 8}h`]);
-
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [{wch:16},{wch:10},{wch:14},{wch:12},{wch:14}];
-
-      // Sanitize sheet name (Excel max 31 chars, no special chars)
-      const sheetName = worker.name.substring(0, 31).replace(/[:\\/?*[\]]/g, '');
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    }
-
-    XLSX.writeFile(wb, `schedule-per-employee-${tm.year}-${String(tm.month+1).padStart(2,'0')}.xlsx`);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:18},{wch:11},{wch:14},{wch:10},{wch:12}];
+    const sheetName = worker.name.substring(0,31).replace(/[:\\/?*[\]]/g,'');
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, `${worker.name.toLowerCase().replace(/\s+/g,'-')}-schedule-${tm.year}-${String(tm.month+1).padStart(2,'0')}.xlsx`);
   }
 
   /* ── Navigation ── */
@@ -1094,7 +1275,7 @@ const App = (() => {
   function goWorkerForm() { state.screen='worker-form'; render(); }
   function goCalendar()   { state.screen='worker-calendar'; render(); }
   function goReview()     { state.screen='worker-review'; render(); }
-  function setTab(t)      { state.activeTab=t; state._scheduleCache=null; render(); }
+  function setTab(t)      { state.activeTab=t; state._scheduleCache=null; state.exportSelectedWorker=null; render(); }
 
   async function goEmployer() {
     state.screen='employer'; state.activeTab='submissions';
@@ -1168,7 +1349,8 @@ const App = (() => {
     goEmployerLogin, goEmployer, checkPassword, setTab,
     submitWorkerForm, submitWorker,
     openPopover, closePopover, setDay,
-    clearAll, exportExcel, exportPerEmployee, exportPDF,
+    clearAll, exportExcel, exportPDF,
+    selectExportWorker, exportOneEmployee,
   };
 })();
 
