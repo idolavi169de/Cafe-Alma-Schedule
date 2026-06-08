@@ -92,7 +92,14 @@ h1{font-size:1.7rem;font-weight:700;} h2{font-size:1.25rem;font-weight:600;} h3{
 .day-cell.normal { background:#f0ebe0; color:#5a3e28; }
 .day-cell.normal:hover { border-color:#3d6b2e; background:#e8f0e0; color:#2a4a1c; }
 .day-cell.unavailable { background:#f5e8e4; border-color:#8b3a2a; color:#6b2010; }
-.day-cell.pref { background:#f0f7e8; border-color:#3d6b2e; color:#2a4a1c; }
+.day-cell.pref      { background:#f0f7e8; border-color:#3d6b2e; color:#2a4a1c; }
+.day-cell.available { background:#e8f5e0; border-color:#3d6b2e; color:#2a4a1c; }
+.day-cell.occ-off   { background:#f0ebe0; color:#c8b898; border-color:transparent; }
+.day-cell.occ-off:hover { border-color:#3d6b2e; background:#e8f5e0; color:#2a4a1c; }
+.type-toggle { display:flex; gap:10px; margin-bottom:6px; }
+.type-btn { flex:1; padding:12px; border-radius:10px; border:2px solid #d4c9b0; background:#faf7f0; cursor:pointer; font-family:'Inter',sans-serif; font-size:0.88rem; font-weight:600; color:#7a5c3a; text-align:center; transition:all .15s; }
+.type-btn.active { border-color:#3d6b2e; background:#eef5e8; color:#2a4a1c; }
+.type-btn:hover:not(.active) { border-color:#9a8068; }
 .day-cell.baking-day { background:#fdf5e0; color:#7a4e10; }
 .day-cell.baking-day:hover { border-color:#b07828; }
 .day-cell.baking-pref { background:#fff0c8; border-color:#b07828; color:#7a4e10; }
@@ -291,7 +298,8 @@ const App = (() => {
     screen: 'home',
     workerName: '',
     contractHours: '',
-    dayStates: {},   // { day: 'unavailable' | slotKey }
+    workerType: 'regular',  // 'regular' | 'occasional'
+    dayStates: {},   // { day: 'unavailable'|'available'|slotKey }
     workers: [],
     activeTab: 'submissions',
     selectedDay: null,
@@ -363,6 +371,21 @@ const App = (() => {
     }
   }
 
+  /* ── Slot family (groups equivalent slots for fairness) ── */
+  function slotFamily(key) {
+    if (key === 'spat13a' || key === 'spat13b') return 'spat13';
+    return key;
+  }
+
+  /* ── Consecutive-day streak check ── */
+  // Returns how many consecutive calendar days BEFORE day d the worker is already assigned.
+  // If that count is >= 5, assigning day d would make a streak of 6+ → blocked.
+  function streakBefore(assignedDays, d) {
+    let count = 0, check = d - 1;
+    while (check >= 1 && assignedDays.has(check)) { count++; check--; }
+    return count;
+  }
+
   /* ── Schedule Generation ── */
   function generateSchedule() {
     if (state._scheduleCache) return state._scheduleCache;
@@ -370,15 +393,36 @@ const App = (() => {
     const totalDays = daysInMonth(tm.year, tm.month);
     const AVG_WEEKS = 4.33, SHIFT_HOURS = 8;
 
-    const ws = state.workers.map(w => ({
+    const ws = state.workers.map(w => {
+      let unavail;
+      if (w.workerType === 'occasional') {
+        // Occasional: unavailable on ALL days except those in availableDays
+        const avail = new Set(w.availableDays || []);
+        unavail = new Set();
+        for (let d = 1; d <= totalDays; d++) {
+          if (!avail.has(d)) unavail.add(d);
+        }
+      } else {
+        unavail = new Set(w.unavailableDays || []);
+      }
+      return {
       name: w.name,
       contractHours: w.contractHours,
-      unavail: new Set(w.unavailableDays || []),
+      unavail,
       prefs: w.preferences || {},
       target: Math.round((w.contractHours * AVG_WEEKS) / SHIFT_HOURS),
       assigned: 0,
       days: new Set(),
-    }));
+      byType: {}, // tracks count per slot family for fair distribution
+      };
+    });
+
+    const addAssignment = (w, d, slotKey) => {
+      w.assigned++;
+      w.days.add(d);
+      const fam = slotFamily(slotKey);
+      w.byType[fam] = (w.byType[fam] || 0) + 1;
+    };
 
     // Build empty schedule
     const schedule = {};
@@ -401,6 +445,12 @@ const App = (() => {
         const pref = w.prefs[d];
         if (!pref || pref === 'unavailable') continue;
 
+        // 5-day consecutive rule
+        if (streakBefore(w.days, d) >= 5) {
+          entry.conflicts.push({ worker: w.name, preferredSlot: pref, reason: 'streak' });
+          continue;
+        }
+
         // Find matching slot keys for this preference on this day
         let candidates;
         if (pref === 'spat13') {
@@ -417,13 +467,13 @@ const App = (() => {
         const freePreferred = candidates.find(k => entry.slots[k] === null);
         if (freePreferred) {
           entry.slots[freePreferred] = w.name;
-          w.assigned++; w.days.add(d);
+          addAssignment(w, d, freePreferred);
         } else {
           // Preferred slots taken — try any other free slot (auto-resolve)
           const anyFree = Object.keys(entry.slots).find(k => entry.slots[k] === null);
           if (anyFree) {
             entry.slots[anyFree] = w.name;
-            w.assigned++; w.days.add(d);
+            addAssignment(w, d, anyFree);
           } else {
             // No slots left — true conflict
             entry.conflicts.push({ worker: w.name, preferredSlot: pref });
@@ -439,16 +489,28 @@ const App = (() => {
       const emptyKeys = Object.keys(entry.slots).filter(k => entry.slots[k] === null);
       if (!emptyKeys.length) continue;
 
-      const eligible = ws
-        .filter(w => !w.unavail.has(d) && !w.days.has(d) && w.assigned < w.target)
-        .sort((a,b) => (b.target - b.assigned) - (a.target - a.assigned));
+      // For each empty slot, re-sort by fairness for THAT specific shift type
+      for (const slotKey of emptyKeys) {
+        const fam = slotFamily(slotKey);
+        const eligible = ws
+          .filter(w =>
+            !w.unavail.has(d) &&
+            !w.days.has(d) &&
+            w.assigned < w.target &&
+            streakBefore(w.days, d) < 5
+          )
+          .sort((a, b) => {
+            // Primary: who has done this shift type the fewest times (fairness)
+            const diff = (a.byType[fam] || 0) - (b.byType[fam] || 0);
+            if (diff !== 0) return diff;
+            // Secondary: who still needs the most shifts overall
+            return (b.target - b.assigned) - (a.target - a.assigned);
+          });
 
-      emptyKeys.forEach((k, i) => {
-        if (i >= eligible.length) return;
-        entry.slots[k] = eligible[i].name;
-        eligible[i].assigned++;
-        eligible[i].days.add(d);
-      });
+        if (!eligible.length) continue;
+        entry.slots[slotKey] = eligible[0].name;
+        addAssignment(eligible[0], d, slotKey);
+      }
     }
 
     // Collect all conflicts
@@ -527,6 +589,17 @@ const App = (() => {
             <input type="number" id="whours" min="1" max="60" placeholder="e.g. 32" value="${state.contractHours}" />
             <div class="hint">Used to fairly distribute shifts across the month.</div>
           </div>
+          <div class="field">
+            <label>How often do you work?</label>
+            <div class="type-toggle">
+              <button class="type-btn ${state.workerType==='regular'?'active':''}" onclick="App.selectWorkerType('regular')">
+                📅 Regular<br><span style="font-size:0.75rem;font-weight:400;opacity:0.75;">Most days · mark days off</span>
+              </button>
+              <button class="type-btn ${state.workerType==='occasional'?'active':''}" onclick="App.selectWorkerType('occasional')">
+                🌟 Occasional<br><span style="font-size:0.75rem;font-weight:400;opacity:0.75;">Few days · mark days on</span>
+              </button>
+            </div>
+          </div>
           <div style="display:flex;justify-content:flex-end;margin-top:8px;">
             <button class="btn btn-blue" onclick="App.submitWorkerForm()">Continue →</button>
           </div>
@@ -568,14 +641,30 @@ const App = (() => {
         continue;
       }
 
-      // Regular working day
-      let cls = 'normal', lbl = '';
-      if (st === 'unavailable') {
-        cls = 'unavailable'; lbl = '<div class="day-label">OFF</div>';
-      } else if (st) {
-        cls = 'pref';
-        const slot = cfg.slots.find(s => s.key === st || (st === 'spat13' && (s.key === 'spat13a' || s.key === 'spat13')));
-        lbl = `<div class="day-label">${slot ? slot.time : st}</div>`;
+      // Regular or Occasional working day
+      let cls = '', lbl = '';
+      const isOcc = state.workerType === 'occasional';
+
+      if (isOcc) {
+        if (!st) {
+          cls = 'occ-off'; lbl = '';
+        } else if (st === 'available') {
+          cls = 'available'; lbl = '<div class="day-label">✓</div>';
+        } else {
+          cls = 'available pref';
+          const slot = cfg.slots.find(s => s.key === st);
+          lbl = `<div class="day-label">${slot ? slot.time : st}</div>`;
+        }
+      } else {
+        if (st === 'unavailable') {
+          cls = 'unavailable'; lbl = '<div class="day-label">OFF</div>';
+        } else if (st) {
+          cls = 'pref';
+          const slot = cfg.slots.find(s => s.key === st);
+          lbl = `<div class="day-label">${slot ? slot.time : st}</div>`;
+        } else {
+          cls = 'normal';
+        }
       }
 
       cells.push(`<div class="day-cell ${cls}" onclick="App.openPopover(event,${d})">
@@ -584,6 +673,7 @@ const App = (() => {
     }
 
     const marked = Object.keys(state.dayStates).length;
+    const isOcc  = state.workerType === 'occasional';
     return `
       <div class="topbar">
         <span>☕ Cafe Alma — ${monthLabel()}</span>
@@ -592,13 +682,25 @@ const App = (() => {
       <div class="screen" style="padding-top:28px;">
         <div class="card card-wide">
           ${renderSteps(2)}
-          <h2 style="margin-bottom:4px;">Your Availability</h2>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            <h2>${isOcc ? 'Days You Can Work' : 'Your Availability'}</h2>
+            <span style="background:${isOcc?'#fff5e0':'#eef5e8'};color:${isOcc?'#b07828':'#2a4a1c'};font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">
+              ${isOcc ? '🌟 Occasional' : '📅 Regular'}
+            </span>
+          </div>
           <p style="color:#9a8068;font-size:0.88rem;margin-bottom:20px;">
-            Hi <strong>${state.workerName}</strong>! Tap any working day to mark it off or set a preferred shift for <strong>${monthLabel()}</strong>.
+            ${isOcc
+              ? `Hi <strong>${state.workerName}</strong>! Tap the days you <strong>can work</strong> this month. Leave the rest untouched.`
+              : `Hi <strong>${state.workerName}</strong>! Tap any working day to mark it off or set a preferred shift for <strong>${monthLabel()}</strong>.`}
           </p>
           <div class="cal-legend">
-            <span><span class="dot dot-red"></span> Day off</span>
-            <span><span class="dot dot-amber"></span> Shift preference</span>
+            ${isOcc ? `
+              <span><span class="dot" style="background:#3d6b2e;"></span> I can work</span>
+              <span><span class="dot dot-amber"></span> I can work + preference</span>
+            ` : `
+              <span><span class="dot dot-red"></span> Day off</span>
+              <span><span class="dot dot-amber"></span> Shift preference</span>
+            `}
             <span><span class="dot dot-gray"></span> Closed / Baking</span>
           </div>
           <div class="calendar-grid">
@@ -615,12 +717,43 @@ const App = (() => {
 
   /* ── Worker Review ── */
   function renderWorkerReview() {
-    const off   = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k).sort((a,b)=>a-b);
-    const prefs = Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').map(([k,v])=>({day:+k,slot:v})).sort((a,b)=>a.day-b.day);
+    const isOcc  = state.workerType === 'occasional';
     const target = Math.round((state.contractHours * 4.33) / 8);
 
-    const tagOff   = off.length   ? off.map(d=>`<span class="tag tag-red">${d}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
-    const tagPrefs = prefs.length ? prefs.map(p=>`<span class="tag tag-amber">Day ${p.day}: ${slotLabel(p.slot)}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+    let reviewRows = '';
+    if (isOcc) {
+      const avail = Object.entries(state.dayStates).filter(([,v])=>v==='available').map(([k])=>+k).sort((a,b)=>a-b);
+      const prefs = Object.entries(state.dayStates).filter(([,v])=>v!=='available').map(([k,v])=>({day:+k,slot:v})).sort((a,b)=>a.day-b.day);
+      const tagAvail = avail.length ? avail.map(d=>`<span class="tag tag-green">${d}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None marked</span>';
+      const tagPrefs = prefs.length ? prefs.map(p=>`<span class="tag tag-amber">Day ${p.day}: ${slotLabel(p.slot)}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+      reviewRows = `
+        <div class="summary-row">
+          <span style="color:#9a8068;">Days available</span>
+          <div class="pill-row" style="justify-content:flex-end;">${tagAvail}</div>
+        </div>
+        <div class="summary-row">
+          <span style="color:#9a8068;">With preference</span>
+          <div class="pill-row" style="justify-content:flex-end;">${tagPrefs}</div>
+        </div>`;
+    } else {
+      const off   = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k).sort((a,b)=>a-b);
+      const prefs = Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').map(([k,v])=>({day:+k,slot:v})).sort((a,b)=>a.day-b.day);
+      const tagOff   = off.length   ? off.map(d=>`<span class="tag tag-red">${d}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+      const tagPrefs = prefs.length ? prefs.map(p=>`<span class="tag tag-amber">Day ${p.day}: ${slotLabel(p.slot)}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+      reviewRows = `
+        <div class="summary-row">
+          <span style="color:#9a8068;">Days off</span>
+          <div class="pill-row" style="justify-content:flex-end;">${tagOff}</div>
+        </div>
+        <div class="summary-row">
+          <span style="color:#9a8068;">Preferences</span>
+          <div class="pill-row" style="justify-content:flex-end;">${tagPrefs}</div>
+        </div>`;
+    }
+
+    const note = isOcc
+      ? 'You will only be assigned on the days you marked. The system will assign shifts fairly among those days.'
+      : 'The system will automatically fill the rest of your shifts based on your contract hours. You can resubmit to update at any time.';
 
     return `
       <div class="topbar">
@@ -632,17 +765,11 @@ const App = (() => {
           ${renderSteps(3)}
           <h2 style="margin-bottom:16px;">Review & Submit</h2>
           <div class="summary-row"><span style="color:#9a8068;">Name</span><strong>${state.workerName}</strong></div>
+          <div class="summary-row"><span style="color:#9a8068;">Type</span><strong>${isOcc ? '🌟 Occasional' : '📅 Regular'}</strong></div>
           <div class="summary-row"><span style="color:#9a8068;">Contract</span><strong>${state.contractHours}h/week (~${target} shifts/month)</strong></div>
-          <div class="summary-row">
-            <span style="color:#9a8068;">Days off</span>
-            <div class="pill-row" style="justify-content:flex-end;">${tagOff}</div>
-          </div>
-          <div class="summary-row">
-            <span style="color:#9a8068;">Preferences</span>
-            <div class="pill-row" style="justify-content:flex-end;">${tagPrefs}</div>
-          </div>
+          ${reviewRows}
           <div style="background:#eef5e8;border-radius:10px;padding:14px;margin-top:20px;font-size:0.85rem;color:#2a4a1c;border:1px solid rgba(61,107,46,0.15);">
-            ℹ️ The system will automatically fill the rest of your shifts based on your contract hours. You can resubmit to update at any time.
+            ℹ️ ${note}
           </div>
           <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end;">
             <button class="btn btn-ghost" onclick="App.goCalendar()">← Edit</button>
@@ -705,19 +832,25 @@ const App = (() => {
       <table style="text-align:left;">
         <thead><tr>
           <th style="text-align:left;">Name</th>
+          <th style="text-align:left;">Type</th>
           <th style="text-align:left;">Contract</th>
-          <th style="text-align:left;">Days Off</th>
+          <th style="text-align:left;">Days Off / Available</th>
           <th style="text-align:left;">Shift Preferences</th>
           <th style="text-align:left;">Submitted</th>
         </tr></thead>
         <tbody>
           ${state.workers.map(w => {
-            const off   = (w.unavailableDays||[]).sort((a,b)=>a-b);
+            const isOcc = w.workerType === 'occasional';
+            const days  = isOcc ? (w.availableDays||[]).sort((a,b)=>a-b) : (w.unavailableDays||[]).sort((a,b)=>a-b);
             const prefs = Object.entries(w.preferences||{}).sort(([a],[b])=>+a-+b);
+            const dayTags = days.length
+              ? days.map(d=>`<span class="tag ${isOcc?'tag-green':'tag-red'}">${d}</span>`).join('')
+              : '—';
             return `<tr>
               <td style="text-align:left;"><strong>${w.name}</strong></td>
+              <td style="text-align:left;"><span style="font-size:0.78rem;font-weight:700;color:${isOcc?'#b07828':'#3d6b2e'};">${isOcc?'🌟 Occasional':'📅 Regular'}</span></td>
               <td style="text-align:left;">${w.contractHours}h/wk</td>
-              <td style="text-align:left;">${off.length ? off.map(d=>`<span class="tag tag-red">${d}</span>`).join('') : '—'}</td>
+              <td style="text-align:left;">${dayTags}</td>
               <td style="text-align:left;">${prefs.length ? prefs.map(([d,s])=>`<span class="tag tag-amber">Day ${d}: ${slotLabel(s)}</span>`).join('') : '—'}</td>
               <td style="text-align:left;color:#9a8068;font-size:0.8rem;">${new Date(w.submittedAt).toLocaleDateString()}</td>
             </tr>`;
@@ -742,15 +875,22 @@ const App = (() => {
     return `
       <div class="section-title">⚠️ ${conflicts.length} Unresolvable Conflict${conflicts.length!==1?'s':''}</div>
       <p style="font-size:0.88rem;color:#9a8068;margin-bottom:20px;">These workers had a preference that could not be assigned — the day was fully booked and no other slot was free. Please contact them directly to decide.</p>
-      ${conflicts.map(c => `
+      ${conflicts.map(c => {
+        const isStreak = c.reason === 'streak';
+        const msg = isStreak
+          ? `<strong>${c.worker}</strong> preferred <strong>${slotLabel(c.preferredSlot)}</strong> but this would be their <strong>6th consecutive working day</strong> — blocked by the 5-day rule.`
+          : `<strong>${c.worker}</strong> preferred <strong>${slotLabel(c.preferredSlot)}</strong> but all slots on this day were already filled.`;
+        const action = isStreak
+          ? `→ Consider giving ${c.worker} a rest day before or after, or manually override if needed.`
+          : `→ Decide which shift to give ${c.worker} and let them know.`;
+        const icon = isStreak ? '🔄' : '📅';
+        return `
         <div class="conflict-card">
-          <h4>📅 Day ${c.day} · ${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}</h4>
-          <p style="font-size:0.87rem;color:#7a3810;">
-            <strong>${c.worker}</strong> preferred <strong>${slotLabel(c.preferredSlot)}</strong>
-            but all slots on this day were already filled by other preferences.
-          </p>
-          <p style="font-size:0.8rem;color:#9a3412;margin-top:8px;">→ Decide which shift to give ${c.worker} and let them know.</p>
-        </div>`).join('')}`;
+          <h4>${icon} Day ${c.day} · ${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}${isStreak ? ' <span style="font-size:0.75rem;background:#fde8d8;color:#c2410c;padding:2px 8px;border-radius:10px;font-weight:600;">5-day rule</span>' : ''}</h4>
+          <p style="font-size:0.87rem;color:#7a3810;margin-bottom:6px;">${msg}</p>
+          <p style="font-size:0.8rem;color:#9a3412;">${action}</p>
+        </div>`;
+      }).join('')}`;
   }
 
   /* ── Dienstplan Tab ── */
@@ -971,67 +1111,170 @@ const App = (() => {
     const workingDays = getWorkingDays();
     const ml = monthLabel();
 
-    const subRows = state.workers.map(w => {
-      const off   = (w.unavailableDays||[]).sort((a,b)=>a-b).join(', ') || '—';
-      const prefs = Object.entries(w.preferences||{}).map(([d,s])=>`Day ${d}: ${slotLabel(s)}`).join(', ') || '—';
-      return `<tr><td>${w.name}</td><td>${w.contractHours}h/wk</td><td>${off}</td><td>${prefs}</td></tr>`;
-    }).join('');
+    // Group working days into calendar weeks (Mon–Sun)
+    function weekKey(d) {
+      const dow = getDow(d);
+      const monIdx = (dow + 6) % 7; // Mon=0 … Sun=6
+      return d - monIdx;
+    }
+    const weekMap = new Map();
+    for (const d of workingDays) {
+      const k = weekKey(d);
+      if (!weekMap.has(k)) weekMap.set(k, []);
+      weekMap.get(k).push(d);
+    }
+    const weeks = [...weekMap.entries()].sort((a,b)=>a[0]-b[0]).map(([,days])=>days);
 
-    const conflictRows = conflicts.length
-      ? conflicts.map(c=>`<tr><td>Day ${c.day} ${DAY_NAMES[getDow(c.day)]}</td><td>${c.worker}</td><td>${slotLabel(c.preferredSlot)}</td></tr>`).join('')
-      : '<tr><td colspan="3" style="color:green;">✅ All preferences resolved automatically</td></tr>';
+    const EARLY_FAMS = ['fruh8','fruh945','mittel930','mitte1030'];
+    const LATE_FAMS  = ['spat12','spat13','spat14','spat15'];
 
-    const dpHeaders = `<th style="text-align:left;">Shift</th><th>Time</th>${workingDays.map(d=>`<th>${DAY_NAMES[getDow(d)]}<br>${d}</th>`).join('')}`;
-    const dpRows = DP_ROWS.map(row => {
-      const cells = workingDays.map(d => {
-        if (!row.dows.includes(getDow(d))) return '<td></td>';
-        const w = schedule[d]?.slots?.[row.key] || '';
-        return `<td style="${w?'background:#eef5e8;font-weight:600;':''}">${w||'·'}</td>`;
+    function buildWeekPage(days, weekNum) {
+      const range = `${DAY_NAMES[getDow(days[0])]} ${days[0]} – ${DAY_NAMES[getDow(days[days.length-1])]} ${days[days.length-1]} ${MONTH_NAMES[tm.month]}`;
+
+      const thCells = days.map(d => {
+        const dow = getDow(d);
+        const cfg = DOW_CONFIG[dow];
+        const bg  = cfg.baking ? '#fff0b0' : cfg.weekend ? '#dcefd4' : '#3d6b2e';
+        const col = cfg.baking ? '#7a4e10' : cfg.weekend ? '#2a4a1c' : '#ffffff';
+        return `<th style="background:${bg};color:${col};padding:8px 6px;text-align:center;min-width:90px;">
+          <div style="font-size:9px;font-weight:600;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">${DAY_NAMES[dow]}</div>
+          <div style="font-size:17px;font-weight:700;margin-top:2px;">${d}</div>
+        </th>`;
       }).join('');
-      return `<tr><td style="text-align:left;white-space:nowrap;"><b>${row.label}</b></td><td>${row.time}</td>${cells}</tr>`;
+
+      const trRows = DP_ROWS.map(row => {
+        if (!days.some(d => row.dows.includes(getDow(d)))) return '';
+        const cells = days.map(d => {
+          if (!row.dows.includes(getDow(d)))
+            return `<td style="background:#f5f0e8;border:1px solid #e8e0d0;"></td>`;
+          const w = schedule[d]?.slots?.[row.key] || '';
+          return `<td style="border:1px solid #e8e0d0;background:${w?'#eef5e8':'#fdfaf5'};font-weight:${w?'700':'400'};color:${w?'#2a4a1c':'#d4c9b0'};padding:7px 6px;font-size:10px;">${w||'·'}</td>`;
+        }).join('');
+        return `<tr>
+          <td style="text-align:left;background:#f5f0e8;border:1px solid #e8e0d0;font-weight:700;color:#5a3e28;font-size:10px;white-space:nowrap;padding:7px 10px;">
+            ${row.label}<br><span style="font-weight:400;color:#9a8068;font-size:8px;">${row.time}</span>
+          </td>
+          ${cells}
+        </tr>`;
+      }).join('');
+
+      return `<div style="page-break-after:always;">
+        <div style="background:linear-gradient(135deg,#2a4a1c,#3d6b2e);color:white;padding:13px 18px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:14px;font-weight:700;">☕ Cafe Alma</span>
+          <span style="font-size:11px;opacity:0.85;">Week ${weekNum} · ${range}</span>
+          <span style="font-size:11px;opacity:0.7;font-style:italic;">${ml}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:0;">
+          <thead><tr>
+            <th style="background:#2a4a1c;color:#e8f5e0;text-align:left;padding:8px 10px;min-width:90px;border:1px solid #1a3a0c;font-size:10px;">Shift</th>
+            ${thCells}
+          </tr></thead>
+          <tbody>${trRows}</tbody>
+        </table>
+      </div>`;
+    }
+
+    const weekPages = weeks.map((days, i) => buildWeekPage(days, i+1)).join('');
+
+    const summaryRows = workerState.map(w => {
+      const pct = w.target > 0 ? Math.round((w.assigned/w.target)*100) : 0;
+      const earlyCount  = EARLY_FAMS.reduce((s,k)=>s+(w.byType[k]||0), 0);
+      const lateCount   = LATE_FAMS.reduce((s,k)=>s+(w.byType[k]||0), 0);
+      const bakingCount = w.byType['baking'] || 0;
+      const statusColor = pct >= 85 ? '#2a5220' : pct >= 60 ? '#b07828' : '#8b3a2a';
+      const statusIcon  = pct >= 85 ? '✅' : pct >= 60 ? '⚠️' : '❌';
+      const origWorker  = state.workers.find(x => x.name === w.name);
+      const isOcc       = origWorker?.workerType === 'occasional';
+      const daysOffLabel = isOcc
+        ? (origWorker?.availableDays||[]).length + ' avail.'
+        : (origWorker?.unavailableDays||[]).length + ' off';
+      const shiftMix = [
+        earlyCount  ? `🌅 ${earlyCount}` : '',
+        lateCount   ? `🌆 ${lateCount}`  : '',
+        bakingCount ? `🥐 ${bakingCount}` : '',
+      ].filter(Boolean).join('  ');
+      return `<tr style="border-bottom:1px solid #e8e0d0;">
+        <td style="text-align:left;font-weight:700;padding:7px 8px;">${w.name}${isOcc?'<span style="font-size:8px;color:#b07828;margin-left:5px;">★ occ</span>':''}</td>
+        <td style="padding:7px 8px;text-align:center;">${w.contractHours}h/wk</td>
+        <td style="padding:7px 8px;text-align:center;">${w.target}</td>
+        <td style="padding:7px 8px;text-align:center;font-weight:700;">${w.assigned}</td>
+        <td style="padding:7px 8px;text-align:center;">${w.assigned*8}h</td>
+        <td style="padding:7px 8px;text-align:center;color:${statusColor};font-weight:700;">${statusIcon} ${pct}%</td>
+        <td style="padding:7px 8px;text-align:center;font-size:9px;color:#7a5c3a;">${daysOffLabel}</td>
+        <td style="padding:7px 8px;text-align:center;font-size:10px;">${shiftMix || '—'}</td>
+      </tr>`;
     }).join('');
 
-    const hourRows = workerState.map(w => {
-      const pct = w.target > 0 ? Math.round((w.assigned/w.target)*100) : 0;
-      return `<tr><td>${w.name}</td><td>${w.contractHours}h/wk</td><td>${w.target}</td><td>${w.assigned}</td><td>${w.assigned*8}h</td><td>${pct}%</td></tr>`;
-    }).join('');
+    const conflictSection = conflicts.length
+      ? `<div style="margin-top:22px;">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#8b3a2a;margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #e8d0c8;">⚠️ Conflicts (${conflicts.length})</div>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Day</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Employee</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Preferred Shift</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Reason</th>
+            </tr></thead>
+            <tbody>
+              ${conflicts.map(c=>`<tr>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;text-align:center;">${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;font-weight:700;text-align:center;">${c.worker}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;text-align:center;">${slotLabel(c.preferredSlot)}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:9px;color:#8b3a2a;text-align:center;">${c.reason==='streak'?'5-day rule':'All slots taken'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`
+      : `<div style="background:#eef5e8;border-radius:6px;padding:11px 14px;color:#2a5220;font-size:11px;margin-top:18px;border:1px solid #c4ddb8;">✅ No conflicts — all preferences assigned automatically.</div>`;
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>Dienstplan — ${ml}</title>
     <style>
-      body{font-family:'Segoe UI',sans-serif;color:#1e1e1e;margin:0;padding:20px;font-size:10px;}
-      .header{background:#2a4a1c;color:white;padding:14px 20px;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;}
-      .header h1{font-size:15px;margin:0;}
-      h2{font-size:12px;font-weight:700;margin:18px 0 6px;color:#2a4a1c;border-bottom:2px solid #d4c9b0;padding-bottom:4px;}
-      table{width:100%;border-collapse:collapse;margin-bottom:8px;}
-      th{background:#3d6b2e;color:white;padding:5px 7px;text-align:center;font-size:9px;}
-      td{padding:5px 7px;border-bottom:1px solid #f0ebe0;text-align:center;}
-      tr:nth-child(even) td{background:#faf7f0;}
-      .footer{margin-top:20px;font-size:8px;color:#9a8068;text-align:center;border-top:1px solid #e8e0d0;padding-top:8px;}
-      @media print{body{padding:8px;}}
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:'Segoe UI',Arial,sans-serif;color:#1e1e1e;font-size:11px;}
+      @page{size:A4 portrait;margin:12mm 12mm;}
+      @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
     </style></head><body>
-    <div class="header"><h1>☕ Cafe Alma — Dienstplan ${ml}</h1><span>Generated ${new Date().toLocaleDateString()}</span></div>
-    <h2>Dienstplan</h2>
-    <div style="overflow-x:auto;"><table><thead><tr>${dpHeaders}</tr></thead><tbody>${dpRows}</tbody></table></div>
-    <h2>Hours Summary</h2>
-    <table><thead><tr><th>Name</th><th>Contract</th><th>Target</th><th>Assigned</th><th>Total Hours</th><th>Fulfillment</th></tr></thead>
-    <tbody>${hourRows}</tbody></table>
-    <h2>Employee Submissions</h2>
-    <table><thead><tr><th style="text-align:left;">Name</th><th>Contract</th><th style="text-align:left;">Days Off</th><th style="text-align:left;">Preferences</th></tr></thead>
-    <tbody>${subRows||'<tr><td colspan="4">No submissions</td></tr>'}</tbody></table>
-    <h2>Conflicts Requiring Attention</h2>
-    <table><thead><tr><th>Day</th><th>Employee</th><th>Preferred Shift</th></tr></thead>
-    <tbody>${conflictRows}</tbody></table>
-    <div class="footer">Cafe Alma Shift Scheduler · ${new Date().toLocaleDateString()}</div>
+
+    ${weekPages}
+
+    <div>
+      <div style="background:linear-gradient(135deg,#2a4a1c,#3d6b2e);color:white;padding:18px 20px;border-radius:6px;margin-bottom:20px;">
+        <div style="font-size:16px;font-weight:700;margin-bottom:3px;">☕ Cafe Alma — Monthly Summary</div>
+        <div style="font-size:11px;opacity:0.75;">${ml} · Generated ${new Date().toLocaleDateString()}</div>
+      </div>
+
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#7a5c3a;margin-bottom:10px;padding-bottom:5px;border-bottom:2px solid #d4c9b0;">Employee Overview</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:left;font-size:9px;">Employee</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Contract</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Target</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Assigned</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Total Hours</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Fulfillment</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Days Off</th>
+          <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:center;font-size:9px;">Shift Mix</th>
+        </tr></thead>
+        <tbody>${summaryRows}</tbody>
+      </table>
+
+      ${conflictSection}
+
+      <div style="margin-top:20px;font-size:8px;color:#9a8068;text-align:center;border-top:1px solid #e8e0d0;padding-top:10px;">
+        Cafe Alma Shift Scheduler · ${new Date().toLocaleDateString()}
+      </div>
+    </div>
+
     <script>window.onload=function(){window.print();}<\/script>
-    </body></html>`;
+    </body></html>\`;
 
     const win = window.open('', '_blank');
     if (!win) { alert('Please allow pop-ups for this page.'); return; }
     win.document.write(html); win.document.close();
   }
 
-  /* ── Popover ── */
+    /* ── Popover ── */
   function openPopover(e, day) {
     e.stopPropagation();
     state.selectedDay = day;
@@ -1044,9 +1287,30 @@ const App = (() => {
         ${DAY_NAMES[dow]}, ${day} ${MONTH_NAMES[tm.month]}
       </div>`;
 
+    const isOcc = state.workerType === 'occasional';
+
     if (!cfg || !cfg.open) {
       html += `<div style="padding:10px 6px;color:#9a8068;font-size:0.85rem;font-style:italic;">Cafe is closed today.</div>`;
+    } else if (isOcc) {
+      // Occasional worker: opt-in flow
+      if (cfg.baking) {
+        html += `<button class="pop-btn pop-shift" onclick="App.setDay('baking')">🥐 I can do Baking</button>`;
+      } else {
+        html += `<button class="pop-btn pop-shift" onclick="App.setDay('available')">✅ I can work — any shift</button>`;
+        html += `<div class="pop-section">Or prefer a specific shift:</div>`;
+        const shown = new Set();
+        cfg.slots.forEach(s => {
+          const dispKey = (s.key==='spat13a'||s.key==='spat13b') ? 'spat13' : s.key;
+          if (shown.has(dispKey)) return;
+          shown.add(dispKey);
+          html += `<button class="pop-btn pop-shift" onclick="App.setDay('${dispKey}')">
+            ${slotEmoji(s.key)} ${s.label} <span style="opacity:0.6;font-size:0.78rem;margin-left:4px;">${s.time}</span>
+          </button>`;
+        });
+      }
+      html += `<button class="pop-btn pop-clear" onclick="App.setDay('clear')" style="margin-top:2px;">🔄 Remove this day</button>`;
     } else {
+      // Regular worker: opt-out flow
       html += `<button class="pop-btn pop-unavail" onclick="App.setDay('unavailable')">❌ Cannot work this day</button>`;
       if (cfg.baking) {
         html += `<div class="pop-section">or</div>`;
@@ -1127,7 +1391,7 @@ const App = (() => {
       if (assignedSlot) {
         const [key] = assignedSlot;
         const slotDef = cfg.slots.find(s => s.key === key);
-        shifts.push({ d, dow, label: slotDef?.label || key, time: slotDef?.time || '' });
+        shifts.push({ d, dow, label: slotDef?.label || key, time: slotDef?.time || '', key });
       }
     }
     return { worker, shifts, daysOff, target };
@@ -1142,126 +1406,168 @@ const App = (() => {
 
   function exportEmployeePDF(data) {
     const { worker, shifts, daysOff, target } = data;
-    const ml = monthLabel();
+    const ml         = monthLabel();
     const totalHours = shifts.length * 8;
-    const prefEntries = Object.entries(worker.preferences || {});
-
-    const shiftRows = shifts.map((s, i) => `
-      <div class="shift-row ${i%2===0?'even':'odd'}">
-        <div class="col-date">${s.d} ${MONTH_NAMES[tm.month].substring(0,3)}</div>
-        <div class="col-day">${DAY_NAMES[s.dow]}</div>
-        <div class="col-shift">${s.label}</div>
-        <div class="col-time">${s.time ? '🕗 ' + s.time : ''}</div>
-      </div>`).join('');
-
-    const offRows = daysOff.map(d => {
-      const dow = getDow(d);
-      return `<div class="off-row">
-        <span style="margin-right:10px;">🚫</span>
-        <span style="font-weight:600;">${d} ${MONTH_NAMES[tm.month].substring(0,3)}</span>
-        <span style="margin-left:8px;color:#9a8068;">${DAY_NAMES[dow]}</span>
-        <span style="margin-left:auto;font-size:0.8rem;color:#8b3a2a;">Day Off</span>
-      </div>`;
-    }).join('');
-
-    const prefRows = prefEntries.length ? prefEntries.map(([d,s]) =>
-      `<span style="display:inline-block;background:#eef5e8;color:#2a4a1c;border-radius:20px;padding:3px 10px;font-size:0.8rem;font-weight:600;margin:3px;">Day ${d}: ${slotLabel(s)}</span>`
-    ).join('') : '<span style="color:#c8b898;font-size:0.85rem;font-style:italic;">No preferences set</span>';
-
     const fulfillPct = target > 0 ? Math.round((shifts.length / target) * 100) : 0;
+
+    // Build lookup maps
+    const shiftByDay = {};
+    shifts.forEach(s => shiftByDay[s.d] = s);
+    const offSet = new Set(daysOff);
+
+    // Calendar grid (Mon-first)
+    const totalDays   = daysInMonth(tm.year, tm.month);
+    const firstDow    = firstDayOfMonth(tm.year, tm.month); // 0=Sun
+    const firstMonIdx = (firstDow + 6) % 7;                // Mon=0 … Sun=6
+
+    const DAY_HDRS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    let calCells = '';
+
+    // Empty offset cells
+    for (let i = 0; i < firstMonIdx; i++) calCells += '<div class="cc empty"></div>';
+
+    for (let d = 1; d <= totalDays; d++) {
+      const dow = getDow(d);
+      const cfg = DOW_CONFIG[dow];
+
+      if (!cfg || !cfg.open) {
+        // Tuesday — closed
+        calCells += `<div class="cc closed"><div class="cn">${d}</div><div class="cl">Closed</div></div>`;
+      } else if (cfg.baking) {
+        const s = shiftByDay[d];
+        calCells += `<div class="cc ${s ? 'baking-work' : 'baking'}">
+          <div class="cn">${d}</div>
+          <div class="cs">🥐 Baking</div>
+          ${s ? '<div class="ct">Working</div>' : ''}
+        </div>`;
+      } else if (shiftByDay[d]) {
+        const s = shiftByDay[d];
+        const isEarly = !s.key.startsWith('spat');
+        calCells += `<div class="cc ${isEarly ? 'early' : 'late'}">
+          <div class="cn">${d}</div>
+          <div class="cs">${s.label}</div>
+          <div class="ct">${s.time ? '🕗 ' + s.time : ''}</div>
+        </div>`;
+      } else if (offSet.has(d)) {
+        calCells += `<div class="cc dayoff"><div class="cn">${d}</div><div class="cl">Day Off</div></div>`;
+      } else {
+        calCells += `<div class="cc rest"><div class="cn">${d}</div></div>`;
+      }
+    }
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>${worker.name} — ${ml}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap');
       *{box-sizing:border-box;margin:0;padding:0;}
-      body{font-family:'Inter',sans-serif;background:#faf7f0;color:#2c1a0e;padding:0;max-width:580px;margin:0 auto;}
+      body{font-family:'Inter',sans-serif;background:#faf7f0;color:#2c1a0e;max-width:680px;margin:0 auto;padding:0;}
 
-      .header{background:linear-gradient(135deg,#2a4a1c 0%,#3d6b2e 100%);padding:36px 32px 28px;color:white;text-align:center;}
-      .cafe-label{font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:0.7;margin-bottom:12px;}
-      .worker-name{font-family:'Lora',serif;font-size:34px;font-weight:700;margin-bottom:4px;}
-      .month-tag{font-size:15px;opacity:0.8;font-style:italic;font-family:'Lora',serif;}
-      .mug-icon{font-size:28px;margin-bottom:10px;}
+      /* Header */
+      .header{background:linear-gradient(135deg,#2a4a1c 0%,#3d6b2e 100%);padding:32px 32px 24px;color:white;text-align:center;}
+      .cafe-lbl{font-size:10px;letter-spacing:3px;text-transform:uppercase;opacity:0.7;margin-bottom:10px;}
+      .wname{font-family:'Lora',serif;font-size:32px;font-weight:700;margin-bottom:3px;}
+      .mtag{font-size:14px;opacity:0.8;font-style:italic;font-family:'Lora',serif;}
 
-      .tagline{text-align:center;padding:16px 24px;background:#f5f0e8;font-style:italic;color:#7a5c3a;font-family:'Lora',serif;font-size:13px;border-bottom:1px solid #e8e0d0;}
+      .tagline{text-align:center;padding:13px 24px;background:#f5f0e8;font-style:italic;color:#7a5c3a;font-family:'Lora',serif;font-size:12px;border-bottom:1px solid #e8e0d0;}
 
-      .body{padding:24px 28px;}
+      /* Body */
+      .body{padding:22px 24px;}
+      .sec-hd{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#9a8068;margin:20px 0 10px;display:flex;align-items:center;gap:8px;}
+      .sec-hd::after{content:'';flex:1;height:1px;background:#e8e0d0;}
 
-      .section-hd{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#9a8068;margin:22px 0 10px;display:flex;align-items:center;gap:8px;}
-      .section-hd::after{content:'';flex:1;height:1px;background:#e8e0d0;}
+      /* Calendar grid */
+      .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+      .dh{text-align:center;font-size:9px;font-weight:700;color:#9a8068;padding:4px 0;text-transform:uppercase;}
 
-      .shift-row{display:flex;align-items:center;padding:11px 14px;border-radius:8px;margin-bottom:6px;font-size:13px;}
-      .even{background:#f0f7e8;} .odd{background:#faf7f0;}
-      .col-date{width:80px;font-weight:700;color:#2c1a0e;}
-      .col-day{width:70px;color:#7a5c3a;font-size:12px;}
-      .col-shift{flex:1;font-weight:600;color:#2a4a1c;}
-      .col-time{color:#9a8068;font-size:12px;}
+      .cc{border-radius:6px;padding:6px 5px;min-height:62px;display:flex;flex-direction:column;}
+      .cc.empty{background:transparent;}
+      .cc.closed{background:#f0ebe0;} .cc.closed .cn{color:#c8b898;} .cc.closed .cl{color:#c8b898;font-size:8px;margin-top:3px;}
+      .cc.baking{background:#fdf5e0;border:1px solid #e8c870;}
+      .cc.baking-work{background:#fff0c0;border:1.5px solid #b07828;}
+      .cc.early{background:#e8f5e0;border:1.5px solid #3d6b2e;}
+      .cc.late{background:#fff5e0;border:1.5px solid #b07828;}
+      .cc.dayoff{background:#fef0ee;border:1px solid #e8b4aa;}
+      .cc.rest{background:#f5f0e8;}
 
-      .off-row{display:flex;align-items:center;padding:9px 14px;background:#fdf5f3;border-radius:8px;margin-bottom:5px;font-size:13px;}
+      .cn{font-weight:700;font-size:11px;color:#2c1a0e;margin-bottom:3px;}
+      .cc.early .cn{color:#2a4a1c;} .cc.late .cn{color:#7a4e10;}
+      .cc.dayoff .cn{color:#8b3a2a;} .cc.closed .cn{color:#c8b898;}
+      .cs{font-size:8.5px;font-weight:700;line-height:1.3;}
+      .cc.early .cs{color:#2a4a1c;} .cc.late .cs{color:#7a4e10;}
+      .cc.baking .cs,.cc.baking-work .cs{color:#7a4e10;}
+      .ct{font-size:8px;color:#9a8068;margin-top:2px;}
+      .cl{font-size:8px;margin-top:2px;}
+      .cc.dayoff .cl{color:#8b3a2a;font-weight:600;}
 
-      .prefs-box{background:#fdf9f3;border:1px solid #e8e0d0;border-radius:10px;padding:14px 16px;font-size:12px;}
+      /* Legend */
+      .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;}
+      .leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:#7a5c3a;}
+      .leg-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;}
 
-      .summary{background:linear-gradient(135deg,#2a4a1c,#3d6b2e);border-radius:12px;padding:24px 28px;margin-top:24px;color:white;}
-      .sum-title{font-family:'Lora',serif;font-size:14px;font-weight:700;margin-bottom:18px;opacity:0.85;}
-      .sum-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-      .sum-item{}
-      .sum-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;opacity:0.65;margin-bottom:4px;}
-      .sum-value{font-size:26px;font-weight:700;font-family:'Lora',serif;}
-      .sum-sub{font-size:11px;opacity:0.6;margin-top:2px;}
-      .fulfil-bar{background:rgba(255,255,255,0.2);border-radius:99px;height:6px;margin-top:14px;}
-      .fulfil-fill{background:rgba(255,255,255,0.85);border-radius:99px;height:6px;width:${Math.min(fulfillPct,100)}%;}
+      /* Summary */
+      .summary{background:linear-gradient(135deg,#2a4a1c,#3d6b2e);border-radius:12px;padding:22px 26px;margin-top:20px;color:white;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      .sum-title{font-family:'Lora',serif;font-size:13px;font-weight:700;margin-bottom:16px;opacity:0.85;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:10px;}
+      .sum-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+      .sum-lbl{font-size:9px;text-transform:uppercase;letter-spacing:0.8px;opacity:0.65;margin-bottom:4px;}
+      .sum-val{font-size:22px;font-weight:700;font-family:'Lora',serif;}
+      .sum-sub{font-size:10px;opacity:0.6;margin-top:2px;}
+      .fbar{background:rgba(255,255,255,0.18);border-radius:99px;height:5px;margin-top:14px;}
+      .ffill{background:rgba(255,255,255,0.85);border-radius:99px;height:5px;width:${Math.min(fulfillPct,100)}%;}
 
-      .footer{text-align:center;padding:18px;font-size:10px;color:#c8b898;border-top:1px solid #e8e0d0;margin-top:8px;}
-      @media print{body{background:white;max-width:100%;} .header{-webkit-print-color-adjust:exact;print-color-adjust:exact;} .summary{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+      .footer{text-align:center;padding:16px;font-size:9px;color:#c8b898;border-top:1px solid #e8e0d0;margin-top:6px;}
+      @media print{body{background:white;} .header,.summary{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
     </style></head><body>
 
     <div class="header">
-      <div class="mug-icon">☕</div>
-      <div class="cafe-label">Cafe Alma</div>
-      <div class="worker-name">${worker.name}</div>
-      <div class="month-tag">${ml}</div>
+      <div class="cafe-lbl">☕ Cafe Alma</div>
+      <div class="wname">${worker.name}</div>
+      <div class="mtag">${ml}</div>
     </div>
 
     <div class="tagline">Your personal schedule for the month — keep it handy ☕</div>
 
     <div class="body">
 
-      <div class="section-hd">Your Shifts · ${shifts.length} total</div>
-      ${shiftRows || '<p style="color:#c8b898;font-style:italic;font-size:13px;">No shifts assigned yet.</p>'}
+      <div class="sec-hd">Monthly Schedule · ${shifts.length} shifts assigned</div>
 
-      ${daysOff.length ? `
-        <div class="section-hd">Days Off · ${daysOff.length}</div>
-        ${offRows}` : ''}
+      <div class="cal">
+        ${DAY_HDRS.map(h=>`<div class="dh">${h}</div>`).join('')}
+        ${calCells}
+      </div>
 
-      ${prefEntries.length ? `
-        <div class="section-hd">Your Preferences</div>
-        <div class="prefs-box">${prefRows}</div>` : ''}
+      <div class="legend">
+        <div class="leg-item"><div class="leg-dot" style="background:#e8f5e0;border:1.5px solid #3d6b2e;"></div> Early shift</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#fff5e0;border:1.5px solid #b07828;"></div> Afternoon shift</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#fff0c0;border:1.5px solid #b07828;"></div> Baking</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#fef0ee;border:1px solid #e8b4aa;"></div> Day off</div>
+        <div class="leg-item"><div class="leg-dot" style="background:#f5f0e8;"></div> Rest / Not scheduled</div>
+      </div>
 
       <div class="summary">
-        <div class="sum-title">Monthly Overview</div>
+        <div class="sum-title">Monthly Summary</div>
         <div class="sum-grid">
-          <div class="sum-item">
-            <div class="sum-label">Shifts Assigned</div>
-            <div class="sum-value">${shifts.length}</div>
+          <div>
+            <div class="sum-lbl">Shifts</div>
+            <div class="sum-val">${shifts.length}</div>
             <div class="sum-sub">of ~${target} target</div>
           </div>
-          <div class="sum-item">
-            <div class="sum-label">Approx. Hours</div>
-            <div class="sum-value">${totalHours}h</div>
-            <div class="sum-sub">${worker.contractHours}h/week contract</div>
+          <div>
+            <div class="sum-lbl">Approx. Hours</div>
+            <div class="sum-val">${totalHours}h</div>
+            <div class="sum-sub">${worker.contractHours}h/wk contract</div>
           </div>
-          <div class="sum-item">
-            <div class="sum-label">Days Off</div>
-            <div class="sum-value">${daysOff.length}</div>
-            <div class="sum-sub">requested this month</div>
+          <div>
+            <div class="sum-lbl">Days Off</div>
+            <div class="sum-val">${daysOff.length}</div>
+            <div class="sum-sub">requested</div>
           </div>
-          <div class="sum-item">
-            <div class="sum-label">Fulfillment</div>
-            <div class="sum-value">${fulfillPct}%</div>
+          <div>
+            <div class="sum-lbl">Fulfillment</div>
+            <div class="sum-val">${fulfillPct}%</div>
             <div class="sum-sub">of monthly target</div>
           </div>
         </div>
-        <div class="fulfil-bar"><div class="fulfil-fill"></div></div>
+        <div class="fbar"><div class="ffill"></div></div>
       </div>
 
     </div>
@@ -1271,8 +1577,7 @@ const App = (() => {
 
     const win = window.open('', '_blank');
     if (!win) { alert('Please allow pop-ups for this page.'); return; }
-    win.document.write(html);
-    win.document.close();
+    win.document.write(html); win.document.close();
   }
 
   function exportEmployeeExcel(data) {
@@ -1311,6 +1616,7 @@ const App = (() => {
   }
 
   /* ── Navigation ── */
+  function selectWorkerType(t) { state.workerType = t; render(); }
   function goHome()         { state.screen = 'home'; render(); }
   function goEmployerLogin(){ state.employerPasswordError = false; state.screen = 'employer-login'; render(); }
   function checkPassword()  {
@@ -1323,7 +1629,7 @@ const App = (() => {
       render();
     }
   }
-  function goWorker()     { state.workerName=''; state.contractHours=''; state.dayStates={}; state.screen='worker-form'; render(); }
+  function goWorker()     { state.workerName=''; state.contractHours=''; state.dayStates={}; state.workerType='regular'; state.screen='worker-form'; render(); }
   function goWorkerForm() { state.screen='worker-form'; render(); }
   function goCalendar()   { state.screen='worker-calendar'; render(); }
   function goReview()     { state.screen='worker-review'; render(); }
@@ -1346,22 +1652,41 @@ const App = (() => {
     state.dayStates     = {};
     const existing = state.workers.find(w => w.name.toLowerCase() === name.toLowerCase());
     if (existing) {
-      (existing.unavailableDays||[]).forEach(d => state.dayStates[d] = 'unavailable');
-      Object.entries(existing.preferences||{}).forEach(([k,v]) => state.dayStates[+k] = v);
       state.contractHours = existing.contractHours;
+      state.workerType = existing.workerType || 'regular';
+      if (existing.workerType === 'occasional') {
+        (existing.availableDays||[]).forEach(d => state.dayStates[d] = 'available');
+        Object.entries(existing.preferences||{}).forEach(([k,v]) => state.dayStates[+k] = v);
+      } else {
+        (existing.unavailableDays||[]).forEach(d => state.dayStates[d] = 'unavailable');
+        Object.entries(existing.preferences||{}).forEach(([k,v]) => state.dayStates[+k] = v);
+      }
     }
     state.screen = 'worker-calendar';
     render();
   }
 
   async function submitWorker() {
-    const unavailableDays = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k);
-    const preferences = {};
-    Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').forEach(([k,v])=>preferences[+k]=v);
+    const isOcc = state.workerType === 'occasional';
+    let unavailableDays = [], availableDays = [], preferences = {};
+
+    if (isOcc) {
+      for (const [k, v] of Object.entries(state.dayStates)) {
+        availableDays.push(+k);
+        if (v !== 'available') preferences[+k] = v;
+      }
+      availableDays.sort((a,b) => a-b);
+    } else {
+      unavailableDays = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k);
+      Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').forEach(([k,v])=>preferences[+k]=v);
+    }
+
     const submission = {
       name: state.workerName,
       contractHours: state.contractHours,
+      workerType: state.workerType,
       unavailableDays,
+      availableDays,
       preferences,
       submittedAt: new Date().toISOString(),
     };
@@ -1399,7 +1724,7 @@ const App = (() => {
   return {
     init, goHome, goWorker, goWorkerForm, goCalendar, goReview,
     goEmployerLogin, goEmployer, checkPassword, setTab,
-    submitWorkerForm, submitWorker,
+    selectWorkerType, submitWorkerForm, submitWorker,
     openPopover, closePopover, setDay,
     clearAll, exportExcel, exportPDF,
     selectExportWorker, exportOneEmployee,
