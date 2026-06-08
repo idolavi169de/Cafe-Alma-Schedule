@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cafe Alma — Shift Scheduler</title>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, collection, doc, setDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyDh9b9sZU_DlvmitS03SdwIMo-HS8BfqaI",
+    authDomain: "cafe-alma-scheduling.firebaseapp.com",
+    projectId: "cafe-alma-scheduling",
+    storageBucket: "cafe-alma-scheduling.firebasestorage.app",
+    messagingSenderId: "209283467252",
+    appId: "1:209283467252:web:865a292866f5bef6771ba1"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+  window._db = db;
+  window._fsCollection = collection;
+  window._fsDoc        = doc;
+  window._fsSetDoc     = setDoc;
+  window._fsGetDocs    = getDocs;
+  window._fsReady      = true;
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  background: #e8e2d4;
+  background-image:
+    radial-gradient(ellipse at 15% 40%, rgba(74,124,63,0.10) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 15%, rgba(74,124,63,0.07) 0%, transparent 45%),
+    radial-gradient(ellipse at 60% 85%, rgba(139,90,43,0.06) 0%, transparent 50%);
+  color: #2c1a0e;
+  min-height: 100vh;
+}
+h1,h2,h3,h4 { font-family:'Lora',Georgia,serif; }
+
+.screen { min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:40px 20px; }
+.card { background:#faf7f0; border-radius:16px; box-shadow:0 4px 24px rgba(80,45,10,0.12); border:1px solid rgba(180,148,100,0.22); padding:36px 40px; width:100%; max-width:640px; }
+.card-wide { max-width:960px; }
+h1{font-size:1.7rem;font-weight:700;} h2{font-size:1.25rem;font-weight:600;} h3{font-size:1.05rem;font-weight:600;} p{line-height:1.55;}
+
+.topbar { width:100%; background:#2a4a1c; background-image:linear-gradient(135deg,#2a4a1c 0%,#3d6b2e 100%); color:#e8f5e0; padding:14px 24px; display:flex; align-items:center; gap:12px; font-size:1rem; font-weight:600; font-family:'Lora',Georgia,serif; border-bottom:2px solid rgba(180,220,140,0.18); }
+.topbar .back-btn { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); color:#e8f5e0; padding:6px 14px; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:600; margin-left:auto; }
+.topbar .back-btn:hover { background:rgba(255,255,255,0.22); }
+
+.btn { display:inline-flex; align-items:center; gap:8px; padding:12px 24px; border-radius:10px; font-size:0.95rem; font-weight:600; cursor:pointer; border:none; transition:opacity .15s,transform .1s; font-family:'Inter',sans-serif; }
+.btn:hover { opacity:0.88; transform:translateY(-1px); }
+.btn:active { transform:translateY(0); }
+.btn-blue   { background:#3d6b2e; color:#f0f7ea; }
+.btn-amber  { background:#b07828; color:#fff8ec; }
+.btn-green  { background:#2a5220; color:#e8f5e0; }
+.btn-red    { background:#8b3a2a; color:#fff0ec; }
+.btn-indigo { background:#6b4226; color:#fff4ec; }
+.btn-ghost  { background:#e4ddd0; color:#5a3e28; }
+.btn-large  { padding:18px 32px; font-size:1.1rem; border-radius:14px; width:100%; justify-content:center; }
+.btn-sm     { padding:7px 16px; font-size:0.83rem; border-radius:8px; }
+
+.home-icon { margin-bottom:16px; display:flex; justify-content:center; filter:drop-shadow(0 4px 14px rgba(122,78,45,0.28)); }
+.home-actions { display:flex; flex-direction:column; gap:14px; }
+
+.field { margin-bottom:22px; }
+.field label { display:block; font-weight:600; font-size:0.9rem; margin-bottom:7px; color:#4a3220; }
+.field input,.field select { width:100%; padding:11px 14px; border:1.5px solid #c8b898; border-radius:9px; font-size:0.95rem; outline:none; background:#fdf9f3; color:#2c1a0e; transition:border-color .15s; font-family:'Inter',sans-serif; }
+.field input:focus,.field select:focus { border-color:#3d6b2e; box-shadow:0 0 0 3px rgba(61,107,46,0.10); }
+.field .hint { font-size:0.8rem; color:#9a8068; margin-top:5px; }
+
+.cal-legend { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:18px; font-size:0.83rem; }
+.cal-legend span { display:flex; align-items:center; gap:6px; color:#6b5040; }
+.dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+.dot-red   { background:#8b3a2a; }
+.dot-amber { background:#b07828; }
+.dot-gray  { background:#c8b898; }
+
+.calendar-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; margin-bottom:6px; }
+.day-header { text-align:center; font-size:0.78rem; font-weight:700; color:#9a8068; padding:6px 0; }
+.day-cell { aspect-ratio:1; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:0.88rem; font-weight:600; cursor:pointer; border:2px solid transparent; transition:all .15s; position:relative; user-select:none; min-height:46px; }
+.day-cell.empty { cursor:default; background:transparent; }
+.day-cell.closed { background:#ede8dc; color:#c8b898; cursor:default; }
+.day-cell.normal { background:#f0ebe0; color:#5a3e28; }
+.day-cell.normal:hover { border-color:#3d6b2e; background:#e8f0e0; color:#2a4a1c; }
+.day-cell.unavailable { background:#f5e8e4; border-color:#8b3a2a; color:#6b2010; }
+.day-cell.pref { background:#f0f7e8; border-color:#3d6b2e; color:#2a4a1c; }
+.day-cell.baking-day { background:#fdf5e0; color:#7a4e10; }
+.day-cell.baking-day:hover { border-color:#b07828; }
+.day-cell.baking-pref { background:#fff0c8; border-color:#b07828; color:#7a4e10; }
+.day-num { font-size:0.85rem; }
+.day-label { font-size:0.55rem; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; margin-top:2px; }
+
+#popover { position:fixed; background:#faf7f0; border-radius:12px; box-shadow:0 8px 32px rgba(80,45,10,0.20); border:1px solid rgba(180,148,100,0.3); padding:10px; z-index:1000; display:none; flex-direction:column; gap:4px; min-width:200px; max-width:240px; }
+#popover.visible { display:flex; }
+.pop-btn { padding:9px 12px; border-radius:8px; border:none; cursor:pointer; font-size:0.85rem; font-weight:600; text-align:left; display:flex; align-items:center; gap:8px; transition:opacity .15s; font-family:'Inter',sans-serif; }
+.pop-btn:hover { opacity:0.82; }
+.pop-unavail { background:#f5e8e4; color:#6b2010; }
+.pop-shift   { background:#f0f7e8; color:#2a4a1c; }
+.pop-baking  { background:#fff5e0; color:#7a4e10; }
+.pop-clear   { background:#ede8dc; color:#5a3e28; }
+.pop-close   { position:absolute; top:6px; right:8px; background:none; border:none; cursor:pointer; color:#b09070; font-size:1rem; }
+.pop-section { font-size:0.7rem; font-weight:700; color:#9a8068; text-transform:uppercase; letter-spacing:0.5px; padding:4px 4px 2px; }
+
+.summary-row { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid #e8e0d0; font-size:0.9rem; }
+.summary-row:last-child { border-bottom:none; }
+.tag { display:inline-block; padding:3px 9px; border-radius:20px; font-size:0.78rem; font-weight:600; margin:2px; }
+.tag-red    { background:#f5e8e4; color:#6b2010; }
+.tag-amber  { background:#f5f0e0; color:#7a4e10; }
+.tag-green  { background:#eef5e8; color:#2a4a1c; }
+
+.tab-bar { display:flex; gap:4px; border-bottom:2px solid #d4c9b0; margin-bottom:28px; flex-wrap:wrap; }
+.tab { padding:10px 20px; font-size:0.9rem; font-weight:600; border:none; background:none; cursor:pointer; color:#8a6a4a; border-bottom:3px solid transparent; margin-bottom:-2px; border-radius:6px 6px 0 0; transition:color .15s; font-family:'Lora',serif; }
+.tab.active { color:#3d6b2e; border-bottom-color:#3d6b2e; }
+.tab:hover:not(.active) { color:#2a4a1c; background:#f0ebe0; }
+
+table { width:100%; border-collapse:collapse; font-size:0.88rem; }
+th { background:#3d6b2e; padding:9px 10px; text-align:center; font-weight:700; color:#e8f5e0; border-bottom:2px solid #2a4a1c; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.4px; font-family:'Lora',serif; }
+td { padding:8px 10px; border-bottom:1px solid #e8e0d0; vertical-align:middle; color:#2c1a0e; text-align:center; }
+tr:last-child td { border-bottom:none; }
+tr:hover td { background:#f5f0e5; }
+.td-label { text-align:left !important; background:#f5f0e8; font-weight:600; color:#5a3e28; border-right:2px solid #d4c9b0; white-space:nowrap; font-size:0.8rem; }
+
+.section-title { font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:#7a5c3a; margin-bottom:16px; }
+.pill-row { display:flex; flex-wrap:wrap; gap:6px; }
+.empty-state { text-align:center; padding:40px 20px; color:#9a8068; }
+.empty-state .ei { font-size:2.5rem; margin-bottom:12px; }
+
+.conflict-card { background:#f8f0e8; border:1.5px solid #c8a070; border-radius:12px; padding:16px 20px; margin-bottom:14px; }
+.conflict-card h4 { color:#7a3810; margin-bottom:8px; font-family:'Lora',serif; }
+
+.steps { display:flex; align-items:center; gap:6px; margin-bottom:28px; }
+.step { display:flex; align-items:center; gap:6px; font-size:0.82rem; color:#9a8068; }
+.step.active { color:#3d6b2e; } .step.done { color:#2a5220; }
+.step-dot { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:700; background:#ddd6c8; color:#8a6a4a; }
+.step.active .step-dot { background:#3d6b2e; color:white; }
+.step.done  .step-dot { background:#2a5220; color:white; }
+.step-line { flex:1; height:2px; background:#d4c9b0; min-width:20px; }
+
+#overlay { position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:999; display:none; }
+#overlay.visible { display:block; }
+
+.progress-wrap { background:#d4c9b0; border-radius:99px; height:8px; width:70px; display:inline-block; vertical-align:middle; margin-left:6px; }
+.progress-fill { height:8px; border-radius:99px; background:#3d6b2e; }
+.progress-fill.warn   { background:#b07828; }
+.progress-fill.danger { background:#8b3a2a; }
+
+.row-warn td { background:#fff7f0 !important; }
+
+/* Falling Leaves */
+.falling-leaf { position:fixed; top:-70px; pointer-events:none; z-index:9999; animation:leafFall linear forwards; will-change:transform; }
+@keyframes leafFall {
+  0%   { transform:translateY(0px)   rotate(0deg)   translateX(0px);  opacity:0.92; }
+  15%  { transform:translateY(15vh)  rotate(54deg)  translateX(28px);  }
+  30%  { transform:translateY(30vh)  rotate(108deg) translateX(-18px); }
+  45%  { transform:translateY(45vh)  rotate(162deg) translateX(32px);  }
+  60%  { transform:translateY(60vh)  rotate(216deg) translateX(-22px); }
+  75%  { transform:translateY(75vh)  rotate(270deg) translateX(18px);  }
+  90%  { transform:translateY(90vh)  rotate(324deg) translateX(-12px); opacity:0.7; }
+  100% { transform:translateY(108vh) rotate(360deg) translateX(8px);   opacity:0; }
+}
+
+@media print { .topbar,.tab-bar,.btn,button { display:none !important; } body { background:white; } .card { box-shadow:none; } }
+</style>
+</head>
+<body>
+
+<div id="popover"><div id="popContent"></div></div>
+<div id="overlay" onclick="App.closePopover()"></div>
+<div id="app"></div>
+
+<script>
+const App = (() => {
+
+  /* ── Constants ── */
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const STORAGE_KEY = 'cafe_alma_v3';
+
+  // Shift slots per day-of-week
+  const DOW_CONFIG = {
+    0: { label:'Sunday',    open:true,  weekend:true,  baking:false, slots:[
+      {key:'fruh8',     label:'Frühdienst', time:'8:00'},
+      {key:'mittel930', label:'Mittel',      time:'9:30'},
+      {key:'mitte1030', label:'Mitte',       time:'10:30'},
+      {key:'spat13a',   label:'Spät',        time:'13:00'},
+      {key:'spat13b',   label:'Spät',        time:'13:00'},
+    ]},
+    1: { label:'Monday',    open:true,  weekend:false, baking:false, slots:[
+      {key:'fruh8',   label:'Frühdienst', time:'8:00'},
+      {key:'fruh945', label:'Früh',        time:'9:45'},
+      {key:'spat13',  label:'Spät',        time:'13:00'},
+      {key:'spat15',  label:'Spät',        time:'15:00'},
+    ]},
+    2: { label:'Tuesday',   open:false },
+    3: { label:'Wednesday', open:true,  weekend:false, baking:true,  slots:[
+      {key:'baking', label:'Baking', time:''},
+    ]},
+    4: { label:'Thursday',  open:true,  weekend:false, baking:false, slots:[
+      {key:'fruh8',   label:'Frühdienst', time:'8:00'},
+      {key:'fruh945', label:'Früh',        time:'9:45'},
+      {key:'spat12',  label:'Spät',        time:'12:00'},
+      {key:'spat14',  label:'Spät',        time:'14:00'},
+    ]},
+    5: { label:'Friday',    open:true,  weekend:false, baking:false, slots:[
+      {key:'fruh8',   label:'Frühdienst', time:'8:00'},
+      {key:'fruh945', label:'Früh',        time:'9:45'},
+      {key:'spat12',  label:'Spät',        time:'12:00'},
+      {key:'spat14',  label:'Spät',        time:'14:00'},
+    ]},
+    6: { label:'Saturday',  open:true,  weekend:true,  baking:false, slots:[
+      {key:'fruh8',     label:'Frühdienst', time:'8:00'},
+      {key:'mittel930', label:'Mittel',      time:'9:30'},
+      {key:'mitte1030', label:'Mitte',       time:'10:30'},
+      {key:'spat13a',   label:'Spät',        time:'13:00'},
+      {key:'spat13b',   label:'Spät',        time:'13:00'},
+    ]},
+  };
+
+  // Row definitions for the Dienstplan table
+  const DP_ROWS = [
+    {key:'fruh8',     label:'Frühdienst', time:'8:00',  dows:[0,1,4,5,6]},
+    {key:'fruh945',   label:'Früh',        time:'9:45',  dows:[1,4,5]},
+    {key:'mittel930', label:'Mittel',      time:'9:30',  dows:[0,6]},
+    {key:'mitte1030', label:'Mitte',       time:'10:30', dows:[0,6]},
+    {key:'spat12',    label:'Spät',        time:'12:00', dows:[4,5]},
+    {key:'spat13',    label:'Spät',        time:'13:00', dows:[1]},
+    {key:'spat13a',   label:'Spät',        time:'13:00', dows:[0,6]},
+    {key:'spat13b',   label:'Spät',        time:'13:00', dows:[0,6]},
+    {key:'spat14',    label:'Spät',        time:'14:00', dows:[4,5]},
+    {key:'spat15',    label:'Spät',        time:'15:00', dows:[1]},
+    {key:'baking',    label:'Baking',      time:'',      dows:[3]},
+  ];
+
+  /* ── State ── */
+  let state = {
+    screen: 'home',
+    workerName: '',
+    contractHours: '',
+    dayStates: {},   // { day: 'unavailable' | slotKey }
+    workers: [],
+    activeTab: 'submissions',
+    selectedDay: null,
+    _scheduleCache: null,
+  };
+
+  /* ── Helpers ── */
+  function getNextMonth() {
+    const now = new Date();
+    let m = now.getMonth() + 1, y = now.getFullYear();
+    if (m > 11) { m = 0; y++; }
+    return { year: y, month: m };
+  }
+  const tm = getNextMonth();
+  const daysInMonth  = (y,m) => new Date(y,m+1,0).getDate();
+  const firstDayOfMonth = (y,m) => new Date(y,m,1).getDay();
+  const monthLabel   = () => `${MONTH_NAMES[tm.month]} ${tm.year}`;
+  const getDow       = d  => new Date(tm.year, tm.month, d).getDay();
+  const getDayCfg    = d  => DOW_CONFIG[getDow(d)];
+
+  function getWorkingDays() {
+    const total = daysInMonth(tm.year, tm.month);
+    const days = [];
+    for (let d = 1; d <= total; d++) {
+      const cfg = getDayCfg(d);
+      if (cfg && cfg.open) days.push(d);
+    }
+    return days;
+  }
+
+  function slotLabel(key) {
+    for (const cfg of Object.values(DOW_CONFIG)) {
+      if (!cfg.slots) continue;
+      const s = cfg.slots.find(s => s.key === key);
+      if (s) return `${s.label}${s.time ? ' · ' + s.time : ''}`;
+    }
+    return key;
+  }
+
+  function slotEmoji(key) {
+    if (['fruh8','fruh945','mittel930','mitte1030'].includes(key)) return '🌅';
+    if (key.startsWith('spat')) return '🌆';
+    if (key === 'baking') return '🥐';
+    return '⏰';
+  }
+
+  /* ── Firebase ── */
+  async function load() {
+    try {
+      const snap = await window._fsGetDocs(window._fsCollection(window._db, 'workers'));
+      state.workers = snap.docs.map(d => d.data());
+    } catch(e) {
+      console.warn('Firebase load failed, using localStorage', e);
+      try { state.workers = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+      catch { state.workers = []; }
+    }
+  }
+
+  async function save() {
+    const w   = state.workers[state.workers.length - 1];
+    const key = w.name.trim().toLowerCase().replace(/\s+/g,'-');
+    try {
+      await window._fsSetDoc(window._fsDoc(window._db, 'workers', key), w);
+    } catch(e) {
+      console.warn('Firebase save failed, using localStorage', e);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.workers));
+    }
+  }
+
+  /* ── Schedule Generation ── */
+  function generateSchedule() {
+    if (state._scheduleCache) return state._scheduleCache;
+
+    const totalDays = daysInMonth(tm.year, tm.month);
+    const AVG_WEEKS = 4.33, SHIFT_HOURS = 8;
+
+    const ws = state.workers.map(w => ({
+      name: w.name,
+      contractHours: w.contractHours,
+      unavail: new Set(w.unavailableDays || []),
+      prefs: w.preferences || {},
+      target: Math.round((w.contractHours * AVG_WEEKS) / SHIFT_HOURS),
+      assigned: 0,
+      days: new Set(),
+    }));
+
+    // Build empty schedule
+    const schedule = {};
+    for (let d = 1; d <= totalDays; d++) {
+      const dow = getDow(d);
+      const cfg = DOW_CONFIG[dow];
+      if (!cfg || !cfg.open) { schedule[d] = { dow, open:false, slots:{}, conflicts:[] }; continue; }
+      const slots = {};
+      cfg.slots.forEach(s => slots[s.key] = null);
+      schedule[d] = { dow, open:true, cfg, slots, conflicts:[] };
+    }
+
+    // Step 1 — assign preferences
+    for (let d = 1; d <= totalDays; d++) {
+      const entry = schedule[d];
+      if (!entry.open) continue;
+
+      for (const w of ws) {
+        if (w.unavail.has(d) || w.days.has(d)) continue;
+        const pref = w.prefs[d];
+        if (!pref || pref === 'unavailable') continue;
+
+        // Find matching slot keys for this preference on this day
+        let candidates;
+        if (pref === 'spat13') {
+          // Matches spat13 (Monday) or spat13a/b (weekends)
+          candidates = entry.cfg.slots
+            .filter(s => s.key==='spat13' || s.key==='spat13a' || s.key==='spat13b')
+            .map(s => s.key);
+        } else {
+          candidates = entry.cfg.slots.filter(s => s.key===pref).map(s => s.key);
+        }
+        if (!candidates.length) continue;
+
+        // Try to fill preferred slot
+        const freePreferred = candidates.find(k => entry.slots[k] === null);
+        if (freePreferred) {
+          entry.slots[freePreferred] = w.name;
+          w.assigned++; w.days.add(d);
+        } else {
+          // Preferred slots taken — try any other free slot (auto-resolve)
+          const anyFree = Object.keys(entry.slots).find(k => entry.slots[k] === null);
+          if (anyFree) {
+            entry.slots[anyFree] = w.name;
+            w.assigned++; w.days.add(d);
+          } else {
+            // No slots left — true conflict
+            entry.conflicts.push({ worker: w.name, preferredSlot: pref });
+          }
+        }
+      }
+    }
+
+    // Step 2 — fill remaining slots greedily
+    for (let d = 1; d <= totalDays; d++) {
+      const entry = schedule[d];
+      if (!entry.open) continue;
+      const emptyKeys = Object.keys(entry.slots).filter(k => entry.slots[k] === null);
+      if (!emptyKeys.length) continue;
+
+      const eligible = ws
+        .filter(w => !w.unavail.has(d) && !w.days.has(d) && w.assigned < w.target)
+        .sort((a,b) => (b.target - b.assigned) - (a.target - a.assigned));
+
+      emptyKeys.forEach((k, i) => {
+        if (i >= eligible.length) return;
+        entry.slots[k] = eligible[i].name;
+        eligible[i].assigned++;
+        eligible[i].days.add(d);
+      });
+    }
+
+    // Collect all conflicts
+    const conflicts = [];
+    for (let d = 1; d <= totalDays; d++) {
+      (schedule[d].conflicts || []).forEach(c => conflicts.push({ day: d, ...c }));
+    }
+
+    state._scheduleCache = { schedule, workerState: ws, conflicts };
+    return state._scheduleCache;
+  }
+
+  /* ── Render ── */
+  function render() {
+    state._scheduleCache = null;
+    const app = document.getElementById('app');
+    switch(state.screen) {
+      case 'home':            app.innerHTML = renderHome(); break;
+      case 'worker-form':     app.innerHTML = renderWorkerForm(); break;
+      case 'worker-calendar': app.innerHTML = renderWorkerCalendar(); break;
+      case 'worker-review':   app.innerHTML = renderWorkerReview(); break;
+      case 'worker-success':  app.innerHTML = renderSuccess(); break;
+      case 'employer':        app.innerHTML = renderEmployer(); break;
+    }
+  }
+
+  /* ── Home ── */
+  function renderHome() {
+    return `
+      <div class="screen">
+        <div class="card" style="max-width:440px;text-align:center;">
+          <div class="home-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 80" width="88" height="96">
+              <path d="M21 30 C19 24 25 18 22 12 C20 6 24 3 22 4" fill="none" stroke="#4a7c3f" stroke-width="2.4" stroke-linecap="round"/>
+              <path d="M37 28 C35 22 41 16 38 10 C36 4 40 1 38 2" fill="none" stroke="#4a7c3f" stroke-width="2.4" stroke-linecap="round"/>
+              <rect x="10" y="33" width="42" height="35" rx="5" fill="#7a4e2d"/>
+              <rect x="10" y="33" width="42" height="7" rx="4" fill="#9a6848"/>
+              <rect x="13" y="38" width="36" height="5" rx="3" fill="#2e1206" opacity="0.45"/>
+              <path d="M52 41 C67 41 67 61 52 61" fill="none" stroke="#6b3e20" stroke-width="6.5" stroke-linecap="round"/>
+              <rect x="7" y="66" width="48" height="6" rx="3" fill="#5a3418"/>
+            </svg>
+          </div>
+          <h1 style="letter-spacing:-0.3px;">Cafe Alma</h1>
+          <p style="color:#7a5c3a;font-size:0.88rem;margin-top:4px;font-style:italic;">Shift Scheduler</p>
+          <p style="color:#7a5c3a;font-size:1rem;margin-top:6px;font-style:italic;">${monthLabel()}</p>
+          <div class="home-actions" style="margin-top:32px;">
+            <button class="btn btn-blue btn-large" onclick="App.goWorker()">👤 &nbsp; I'm an Employee</button>
+            <button class="btn btn-indigo btn-large" onclick="App.goEmployer()">🏢 &nbsp; I'm the Employer</button>
+          </div>
+          <p style="margin-top:22px;color:#9a8068;font-size:0.88rem;">
+            ${state.workers.length} employee${state.workers.length!==1?'s':''} submitted for ${monthLabel()}
+          </p>
+        </div>
+      </div>`;
+  }
+
+  /* ── Worker Form ── */
+  function renderWorkerForm() {
+    return `
+      <div class="topbar">
+        <span>☕ Cafe Alma — ${monthLabel()}</span>
+        <button class="back-btn" onclick="App.goHome()">← Back</button>
+      </div>
+      <div class="screen" style="padding-top:28px;">
+        <div class="card">
+          ${renderSteps(1)}
+          <h2 style="margin-bottom:6px;">Your Details</h2>
+          <p style="color:#9a8068;font-size:0.88rem;margin-bottom:24px;">Enter your name and weekly contracted hours.</p>
+          <div class="field">
+            <label>Full Name</label>
+            <input type="text" id="wname" placeholder="e.g. Ana" value="${state.workerName}" />
+          </div>
+          <div class="field">
+            <label>Contract Hours <span style="font-weight:400;color:#9a8068;">(per week)</span></label>
+            <input type="number" id="whours" min="1" max="60" placeholder="e.g. 32" value="${state.contractHours}" />
+            <div class="hint">Used to fairly distribute shifts across the month.</div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+            <button class="btn btn-blue" onclick="App.submitWorkerForm()">Continue →</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  /* ── Worker Calendar ── */
+  function renderWorkerCalendar() {
+    const totalDays = daysInMonth(tm.year, tm.month);
+    const firstDay  = firstDayOfMonth(tm.year, tm.month);
+    const cells = [];
+
+    for (let i = 0; i < firstDay; i++) cells.push('<div class="day-cell empty"></div>');
+
+    for (let d = 1; d <= totalDays; d++) {
+      const dow = getDow(d);
+      const cfg = DOW_CONFIG[dow];
+      const st  = state.dayStates[d];
+
+      // Closed day (Tuesday)
+      if (!cfg || !cfg.open) {
+        cells.push(`<div class="day-cell closed" title="Closed">
+          <div class="day-num" style="font-size:0.8rem;">${d}</div>
+          <div class="day-label">closed</div>
+        </div>`);
+        continue;
+      }
+
+      // Baking day (Wednesday)
+      if (cfg.baking) {
+        const cls = st === 'unavailable' ? 'unavailable' : st === 'baking' ? 'baking-pref' : 'baking-day';
+        const lbl = st === 'unavailable' ? '<div class="day-label">OFF</div>'
+                  : st === 'baking'      ? '<div class="day-label">🥐</div>'
+                  :                        '<div class="day-label">baking</div>';
+        cells.push(`<div class="day-cell ${cls}" onclick="App.openPopover(event,${d})">
+          <div class="day-num">${d}</div>${lbl}
+        </div>`);
+        continue;
+      }
+
+      // Regular working day
+      let cls = 'normal', lbl = '';
+      if (st === 'unavailable') {
+        cls = 'unavailable'; lbl = '<div class="day-label">OFF</div>';
+      } else if (st) {
+        cls = 'pref';
+        const slot = cfg.slots.find(s => s.key === st || (st === 'spat13' && (s.key === 'spat13a' || s.key === 'spat13')));
+        lbl = `<div class="day-label">${slot ? slot.time : st}</div>`;
+      }
+
+      cells.push(`<div class="day-cell ${cls}" onclick="App.openPopover(event,${d})">
+        <div class="day-num">${d}</div>${lbl}
+      </div>`);
+    }
+
+    const marked = Object.keys(state.dayStates).length;
+    return `
+      <div class="topbar">
+        <span>☕ Cafe Alma — ${monthLabel()}</span>
+        <button class="back-btn" onclick="App.goWorkerForm()">← Back</button>
+      </div>
+      <div class="screen" style="padding-top:28px;">
+        <div class="card card-wide">
+          ${renderSteps(2)}
+          <h2 style="margin-bottom:4px;">Your Availability</h2>
+          <p style="color:#9a8068;font-size:0.88rem;margin-bottom:20px;">
+            Hi <strong>${state.workerName}</strong>! Tap any working day to mark it off or set a preferred shift for <strong>${monthLabel()}</strong>.
+          </p>
+          <div class="cal-legend">
+            <span><span class="dot dot-red"></span> Day off</span>
+            <span><span class="dot dot-amber"></span> Shift preference</span>
+            <span><span class="dot dot-gray"></span> Closed / Baking</span>
+          </div>
+          <div class="calendar-grid">
+            ${DAY_NAMES.map(d=>`<div class="day-header">${d}</div>`).join('')}
+            ${cells.join('')}
+          </div>
+          <div style="margin-top:24px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:0.85rem;color:#9a8068;">${marked} day(s) marked</span>
+            <button class="btn btn-blue" onclick="App.goReview()">Review →</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  /* ── Worker Review ── */
+  function renderWorkerReview() {
+    const off   = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k).sort((a,b)=>a-b);
+    const prefs = Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').map(([k,v])=>({day:+k,slot:v})).sort((a,b)=>a.day-b.day);
+    const target = Math.round((state.contractHours * 4.33) / 8);
+
+    const tagOff   = off.length   ? off.map(d=>`<span class="tag tag-red">${d}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+    const tagPrefs = prefs.length ? prefs.map(p=>`<span class="tag tag-amber">Day ${p.day}: ${slotLabel(p.slot)}</span>`).join('') : '<span style="color:#9a8068;font-size:0.85rem;">None</span>';
+
+    return `
+      <div class="topbar">
+        <span>☕ Cafe Alma — ${monthLabel()}</span>
+        <button class="back-btn" onclick="App.goCalendar()">← Back</button>
+      </div>
+      <div class="screen" style="padding-top:28px;">
+        <div class="card">
+          ${renderSteps(3)}
+          <h2 style="margin-bottom:16px;">Review & Submit</h2>
+          <div class="summary-row"><span style="color:#9a8068;">Name</span><strong>${state.workerName}</strong></div>
+          <div class="summary-row"><span style="color:#9a8068;">Contract</span><strong>${state.contractHours}h/week (~${target} shifts/month)</strong></div>
+          <div class="summary-row">
+            <span style="color:#9a8068;">Days off</span>
+            <div class="pill-row" style="justify-content:flex-end;">${tagOff}</div>
+          </div>
+          <div class="summary-row">
+            <span style="color:#9a8068;">Preferences</span>
+            <div class="pill-row" style="justify-content:flex-end;">${tagPrefs}</div>
+          </div>
+          <div style="background:#eef5e8;border-radius:10px;padding:14px;margin-top:20px;font-size:0.85rem;color:#2a4a1c;border:1px solid rgba(61,107,46,0.15);">
+            ℹ️ The system will automatically fill the rest of your shifts based on your contract hours. You can resubmit to update at any time.
+          </div>
+          <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end;">
+            <button class="btn btn-ghost" onclick="App.goCalendar()">← Edit</button>
+            <button class="btn btn-green" onclick="App.submitWorker()">✓ Submit</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  /* ── Success ── */
+  function renderSuccess() {
+    return `
+      <div class="screen" style="justify-content:center;">
+        <div class="card" style="max-width:420px;text-align:center;">
+          <div style="font-size:3.5rem;margin-bottom:16px;">🎉</div>
+          <h2>Submitted!</h2>
+          <p style="color:#9a8068;margin-top:10px;">Your availability for <strong>${monthLabel()}</strong> has been saved. Sophie will put together the schedule from everyone's submissions.</p>
+          <div style="margin-top:28px;">
+            <button class="btn btn-blue btn-large" onclick="App.goHome()">← Back to Home</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  /* ── Employer Dashboard ── */
+  function renderEmployer() {
+    const tabs = [
+      {id:'submissions', label:'📋 Submissions'},
+      {id:'conflicts',   label:'⚠️ Conflicts'},
+      {id:'schedule',    label:'📆 Dienstplan'},
+      {id:'export',      label:'📊 Export'},
+    ];
+    let content = '';
+    switch(state.activeTab) {
+      case 'submissions': content = renderSubmissions(); break;
+      case 'conflicts':   content = renderConflicts();   break;
+      case 'schedule':    content = renderDienstplan();  break;
+      case 'export':      content = renderExport();      break;
+    }
+    return `
+      <div class="topbar">
+        <span>🏢 Employer Dashboard — ${monthLabel()}</span>
+        <button class="back-btn" onclick="App.goHome()">← Back</button>
+      </div>
+      <div class="screen" style="padding-top:28px;">
+        <div class="card card-wide">
+          <div class="tab-bar">
+            ${tabs.map(t=>`<button class="tab ${state.activeTab===t.id?'active':''}" onclick="App.setTab('${t.id}')">${t.label}</button>`).join('')}
+          </div>
+          ${content}
+        </div>
+      </div>`;
+  }
+
+  /* ── Submissions Tab ── */
+  function renderSubmissions() {
+    if (!state.workers.length) return emptyState('No submissions yet','Employees will appear here once they submit.');
+    return `
+      <div class="section-title">${state.workers.length} Employee${state.workers.length!==1?'s':''} Submitted</div>
+      <table style="text-align:left;">
+        <thead><tr>
+          <th style="text-align:left;">Name</th>
+          <th style="text-align:left;">Contract</th>
+          <th style="text-align:left;">Days Off</th>
+          <th style="text-align:left;">Shift Preferences</th>
+          <th style="text-align:left;">Submitted</th>
+        </tr></thead>
+        <tbody>
+          ${state.workers.map(w => {
+            const off   = (w.unavailableDays||[]).sort((a,b)=>a-b);
+            const prefs = Object.entries(w.preferences||{}).sort(([a],[b])=>+a-+b);
+            return `<tr>
+              <td style="text-align:left;"><strong>${w.name}</strong></td>
+              <td style="text-align:left;">${w.contractHours}h/wk</td>
+              <td style="text-align:left;">${off.length ? off.map(d=>`<span class="tag tag-red">${d}</span>`).join('') : '—'}</td>
+              <td style="text-align:left;">${prefs.length ? prefs.map(([d,s])=>`<span class="tag tag-amber">Day ${d}: ${slotLabel(s)}</span>`).join('') : '—'}</td>
+              <td style="text-align:left;color:#9a8068;font-size:0.8rem;">${new Date(w.submittedAt).toLocaleDateString()}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:18px;">
+        <button class="btn btn-sm btn-red" onclick="App.clearAll()">🗑 Clear All Data</button>
+      </div>`;
+  }
+
+  /* ── Conflicts Tab ── */
+  function renderConflicts() {
+    if (!state.workers.length) return emptyState('No data yet','Conflicts will appear after employees submit.');
+    const { conflicts } = generateSchedule();
+    if (!conflicts.length) return `
+      <div class="empty-state">
+        <div class="ei">✅</div>
+        <strong>No conflicts!</strong>
+        <p style="margin-top:8px;">All shift preferences were assigned — either to the preferred slot or to another available slot automatically.</p>
+      </div>`;
+    return `
+      <div class="section-title">⚠️ ${conflicts.length} Unresolvable Conflict${conflicts.length!==1?'s':''}</div>
+      <p style="font-size:0.88rem;color:#9a8068;margin-bottom:20px;">These workers had a preference that could not be assigned — the day was fully booked and no other slot was free. Please contact them directly to decide.</p>
+      ${conflicts.map(c => `
+        <div class="conflict-card">
+          <h4>📅 Day ${c.day} · ${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}</h4>
+          <p style="font-size:0.87rem;color:#7a3810;">
+            <strong>${c.worker}</strong> preferred <strong>${slotLabel(c.preferredSlot)}</strong>
+            but all slots on this day were already filled by other preferences.
+          </p>
+          <p style="font-size:0.8rem;color:#9a3412;margin-top:8px;">→ Decide which shift to give ${c.worker} and let them know.</p>
+        </div>`).join('')}`;
+  }
+
+  /* ── Dienstplan Tab ── */
+  function renderDienstplan() {
+    if (!state.workers.length) return emptyState('No data yet','The Dienstplan will appear after employees submit.');
+    const { schedule, workerState } = generateSchedule();
+    const workingDays = getWorkingDays();
+
+    // Hours summary
+    const summaryRows = workerState.map(w => {
+      const pct = w.target > 0 ? Math.round((w.assigned / w.target) * 100) : 0;
+      const cls = pct >= 85 ? '' : pct >= 60 ? 'warn' : 'danger';
+      const icon = pct >= 85 ? '✅' : pct >= 60 ? '⚠️' : '❌';
+      return `<tr>
+        <td style="text-align:left;"><strong>${w.name}</strong></td>
+        <td>${w.contractHours}h/wk</td>
+        <td>${w.target}</td>
+        <td>${w.assigned}</td>
+        <td>${icon} <span class="progress-wrap"><span class="progress-fill ${cls}" style="width:${Math.min(pct,100)}%"></span></span> ${pct}%</td>
+      </tr>`;
+    }).join('');
+
+    // Dienstplan table headers
+    const dayHeaders = workingDays.map(d => {
+      const dow = getDow(d);
+      const cfg = DOW_CONFIG[dow];
+      const bg  = cfg.weekend ? '#e8f0e0' : cfg.baking ? '#fff5e0' : '#3d6b2e';
+      const col = cfg.weekend ? '#2a4a1c' : cfg.baking ? '#7a4e10' : '#e8f5e0';
+      return `<th style="background:${bg};color:${col};min-width:58px;padding:7px 4px;">
+        <div style="font-size:0.68rem;font-weight:600;">${DAY_NAMES[dow]}</div>
+        <div style="font-size:0.85rem;">${d}</div>
+      </th>`;
+    }).join('');
+
+    // Dienstplan table rows
+    const tableRows = DP_ROWS.map(row => {
+      const cells = workingDays.map(d => {
+        const dow = getDow(d);
+        if (!row.dows.includes(dow)) return `<td style="background:#f0ebe0;color:#d4c9b0;">·</td>`;
+        const worker = schedule[d]?.slots?.[row.key] || '';
+        const bg = worker ? '#eef5e8' : '#fdf9f3';
+        return `<td style="background:${bg};font-weight:${worker?'600':'400'};color:${worker?'#2a4a1c':'#c8b898'};font-size:0.82rem;">
+          ${worker || '·'}
+        </td>`;
+      }).join('');
+
+      return `<tr>
+        <td class="td-label">${row.label}<br><span style="font-size:0.68rem;font-weight:400;color:#9a8068;">${row.time}</span></td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="section-title">Hours Summary</div>
+      <table style="margin-bottom:28px;text-align:center;">
+        <thead><tr>
+          <th style="text-align:left;">Employee</th>
+          <th>Contract</th><th>Target Shifts</th><th>Assigned</th><th>Fulfillment</th>
+        </tr></thead>
+        <tbody>${summaryRows}</tbody>
+      </table>
+
+      <div class="section-title">Dienstplan — ${monthLabel()}</div>
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid #d4c9b0;">
+        <table style="min-width:500px;">
+          <thead><tr>
+            <th style="min-width:96px;text-align:left;background:#2a4a1c;">Shift</th>
+            ${dayHeaders}
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  /* ── Export Tab ── */
+  function renderExport() {
+    return `
+      <div class="section-title">Export Options</div>
+      <div style="display:flex;flex-direction:column;gap:14px;max-width:420px;">
+        <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
+          <h3 style="margin-bottom:8px;">📊 Excel — Dienstplan</h3>
+          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Download a .xlsx file in Dienstplan format — ready to share on Telegram.</p>
+          <button class="btn btn-green" onclick="App.exportExcel()">⬇ Download Excel</button>
+        </div>
+        <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
+          <h3 style="margin-bottom:8px;">📄 PDF Report</h3>
+          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Full report with submissions, conflicts, and the Dienstplan.</p>
+          <button class="btn btn-blue" onclick="App.exportPDF()">⬇ Download PDF</button>
+        </div>
+      </div>`;
+  }
+
+  /* ── Steps ── */
+  function renderSteps(current) {
+    const steps = [{n:1,label:'Details'},{n:2,label:'Calendar'},{n:3,label:'Review'}];
+    return `<div class="steps" style="margin-bottom:28px;">
+      ${steps.map((s,i) => {
+        const cls = s.n < current ? 'done' : s.n === current ? 'active' : '';
+        return `${i>0?'<div class="step-line"></div>':''}
+          <div class="step ${cls}">
+            <div class="step-dot">${s.n < current ? '✓' : s.n}</div>
+            <span>${s.label}</span>
+          </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function emptyState(title, msg) {
+    return `<div class="empty-state"><div class="ei">📭</div><strong>${title}</strong><p style="margin-top:8px;">${msg}</p></div>`;
+  }
+
+  /* ── Excel Export ── */
+  function exportExcel() {
+    if (typeof XLSX === 'undefined') { alert('Excel library not loaded. Check internet connection.'); return; }
+    const { schedule, workerState } = generateSchedule();
+    const workingDays = getWorkingDays();
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Dienstplan
+    const headers = ['Schicht', 'Zeit', ...workingDays.map(d => `${DAY_NAMES[getDow(d)]} ${d}`)];
+    const rows = [headers];
+    DP_ROWS.forEach(row => {
+      const cells = [row.label, row.time];
+      workingDays.forEach(d => {
+        const dow = getDow(d);
+        if (!row.dows.includes(dow)) { cells.push(''); return; }
+        cells.push(schedule[d]?.slots?.[row.key] || '');
+      });
+      rows.push(cells);
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet(rows);
+    ws1['!cols'] = [{wch:14},{wch:7},...workingDays.map(()=>({wch:13}))];
+    XLSX.utils.book_append_sheet(wb, ws1, `Dienstplan ${monthLabel()}`);
+
+    // Sheet 2: Hours Summary
+    const s2rows = [
+      ['Name','Contract (h/wk)','Target Shifts','Assigned Shifts','Total Hours','Fulfillment %'],
+      ...workerState.map(w => {
+        const pct = w.target > 0 ? Math.round((w.assigned/w.target)*100) : 0;
+        return [w.name, w.contractHours, w.target, w.assigned, w.assigned*8, pct+'%'];
+      })
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(s2rows);
+    ws2['!cols'] = [{wch:14},{wch:14},{wch:14},{wch:14},{wch:12},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Hours Summary');
+
+    XLSX.writeFile(wb, `dienstplan-cafe-alma-${tm.year}-${String(tm.month+1).padStart(2,'0')}.xlsx`);
+  }
+
+  /* ── PDF Export ── */
+  function exportPDF() {
+    const { schedule, workerState, conflicts } = generateSchedule();
+    const workingDays = getWorkingDays();
+    const ml = monthLabel();
+
+    const subRows = state.workers.map(w => {
+      const off   = (w.unavailableDays||[]).sort((a,b)=>a-b).join(', ') || '—';
+      const prefs = Object.entries(w.preferences||{}).map(([d,s])=>`Day ${d}: ${slotLabel(s)}`).join(', ') || '—';
+      return `<tr><td>${w.name}</td><td>${w.contractHours}h/wk</td><td>${off}</td><td>${prefs}</td></tr>`;
+    }).join('');
+
+    const conflictRows = conflicts.length
+      ? conflicts.map(c=>`<tr><td>Day ${c.day} ${DAY_NAMES[getDow(c.day)]}</td><td>${c.worker}</td><td>${slotLabel(c.preferredSlot)}</td></tr>`).join('')
+      : '<tr><td colspan="3" style="color:green;">✅ All preferences resolved automatically</td></tr>';
+
+    const dpHeaders = `<th style="text-align:left;">Shift</th><th>Time</th>${workingDays.map(d=>`<th>${DAY_NAMES[getDow(d)]}<br>${d}</th>`).join('')}`;
+    const dpRows = DP_ROWS.map(row => {
+      const cells = workingDays.map(d => {
+        if (!row.dows.includes(getDow(d))) return '<td></td>';
+        const w = schedule[d]?.slots?.[row.key] || '';
+        return `<td style="${w?'background:#eef5e8;font-weight:600;':''}">${w||'·'}</td>`;
+      }).join('');
+      return `<tr><td style="text-align:left;white-space:nowrap;"><b>${row.label}</b></td><td>${row.time}</td>${cells}</tr>`;
+    }).join('');
+
+    const hourRows = workerState.map(w => {
+      const pct = w.target > 0 ? Math.round((w.assigned/w.target)*100) : 0;
+      return `<tr><td>${w.name}</td><td>${w.contractHours}h/wk</td><td>${w.target}</td><td>${w.assigned}</td><td>${w.assigned*8}h</td><td>${pct}%</td></tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>Dienstplan — ${ml}</title>
+    <style>
+      body{font-family:'Segoe UI',sans-serif;color:#1e1e1e;margin:0;padding:20px;font-size:10px;}
+      .header{background:#2a4a1c;color:white;padding:14px 20px;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;}
+      .header h1{font-size:15px;margin:0;}
+      h2{font-size:12px;font-weight:700;margin:18px 0 6px;color:#2a4a1c;border-bottom:2px solid #d4c9b0;padding-bottom:4px;}
+      table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+      th{background:#3d6b2e;color:white;padding:5px 7px;text-align:center;font-size:9px;}
+      td{padding:5px 7px;border-bottom:1px solid #f0ebe0;text-align:center;}
+      tr:nth-child(even) td{background:#faf7f0;}
+      .footer{margin-top:20px;font-size:8px;color:#9a8068;text-align:center;border-top:1px solid #e8e0d0;padding-top:8px;}
+      @media print{body{padding:8px;}}
+    </style></head><body>
+    <div class="header"><h1>☕ Cafe Alma — Dienstplan ${ml}</h1><span>Generated ${new Date().toLocaleDateString()}</span></div>
+    <h2>Dienstplan</h2>
+    <div style="overflow-x:auto;"><table><thead><tr>${dpHeaders}</tr></thead><tbody>${dpRows}</tbody></table></div>
+    <h2>Hours Summary</h2>
+    <table><thead><tr><th>Name</th><th>Contract</th><th>Target</th><th>Assigned</th><th>Total Hours</th><th>Fulfillment</th></tr></thead>
+    <tbody>${hourRows}</tbody></table>
+    <h2>Employee Submissions</h2>
+    <table><thead><tr><th style="text-align:left;">Name</th><th>Contract</th><th style="text-align:left;">Days Off</th><th style="text-align:left;">Preferences</th></tr></thead>
+    <tbody>${subRows||'<tr><td colspan="4">No submissions</td></tr>'}</tbody></table>
+    <h2>Conflicts Requiring Attention</h2>
+    <table><thead><tr><th>Day</th><th>Employee</th><th>Preferred Shift</th></tr></thead>
+    <tbody>${conflictRows}</tbody></table>
+    <div class="footer">Cafe Alma Shift Scheduler · ${new Date().toLocaleDateString()}</div>
+    <script>window.onload=function(){window.print();}<\/script>
+    </body></html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Please allow pop-ups for this page.'); return; }
+    win.document.write(html); win.document.close();
+  }
+
+  /* ── Popover ── */
+  function openPopover(e, day) {
+    e.stopPropagation();
+    state.selectedDay = day;
+    const dow = getDow(day);
+    const cfg = DOW_CONFIG[dow];
+
+    let html = `
+      <button class="pop-close" onclick="App.closePopover()">✕</button>
+      <div style="font-size:0.78rem;font-weight:700;color:#9a8068;padding:4px 6px 8px;border-bottom:1px solid #e8e0d0;margin-bottom:4px;">
+        ${DAY_NAMES[dow]}, ${day} ${MONTH_NAMES[tm.month]}
+      </div>`;
+
+    if (!cfg || !cfg.open) {
+      html += `<div style="padding:10px 6px;color:#9a8068;font-size:0.85rem;font-style:italic;">Cafe is closed today.</div>`;
+    } else {
+      html += `<button class="pop-btn pop-unavail" onclick="App.setDay('unavailable')">❌ Cannot work this day</button>`;
+      if (cfg.baking) {
+        html += `<div class="pop-section">or</div>`;
+        html += `<button class="pop-btn pop-baking" onclick="App.setDay('baking')">🥐 Available for Baking</button>`;
+      } else {
+        html += `<div class="pop-section">Prefer a shift:</div>`;
+        const shown = new Set();
+        cfg.slots.forEach(s => {
+          const dispKey = (s.key==='spat13a'||s.key==='spat13b') ? 'spat13' : s.key;
+          if (shown.has(dispKey)) return;
+          shown.add(dispKey);
+          html += `<button class="pop-btn pop-shift" onclick="App.setDay('${dispKey}')">
+            ${slotEmoji(s.key)} ${s.label} <span style="opacity:0.6;font-size:0.78rem;margin-left:4px;">${s.time}</span>
+          </button>`;
+        });
+      }
+      html += `<button class="pop-btn pop-clear" onclick="App.setDay('clear')" style="margin-top:2px;">🔄 Clear</button>`;
+    }
+
+    document.getElementById('popContent').innerHTML = html;
+    const pop = document.getElementById('popover');
+    const ov  = document.getElementById('overlay');
+    pop.classList.add('visible');
+    ov.classList.add('visible');
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    let left = rect.left + window.scrollX;
+    let top  = rect.bottom + 6 + window.scrollY;
+    if (left + 230 > window.innerWidth) left = window.innerWidth - 240;
+    if (top + 280 > window.innerHeight + window.scrollY) top = rect.top + window.scrollY - 280;
+    pop.style.left = left + 'px';
+    pop.style.top  = top  + 'px';
+  }
+
+  function closePopover() {
+    document.getElementById('popover').classList.remove('visible');
+    document.getElementById('overlay').classList.remove('visible');
+    state.selectedDay = null;
+  }
+
+  function setDay(type) {
+    const d = state.selectedDay;
+    if (!d) return;
+    if (type === 'clear') delete state.dayStates[d];
+    else state.dayStates[d] = type;
+    closePopover();
+    render();
+  }
+
+  /* ── Navigation ── */
+  function goHome()       { state.screen = 'home'; render(); }
+  function goWorker()     { state.workerName=''; state.contractHours=''; state.dayStates={}; state.screen='worker-form'; render(); }
+  function goWorkerForm() { state.screen='worker-form'; render(); }
+  function goCalendar()   { state.screen='worker-calendar'; render(); }
+  function goReview()     { state.screen='worker-review'; render(); }
+  function setTab(t)      { state.activeTab=t; state._scheduleCache=null; render(); }
+
+  async function goEmployer() {
+    state.screen='employer'; state.activeTab='submissions';
+    document.getElementById('app').innerHTML=`<div class="screen" style="justify-content:center;align-items:center;"><div style="text-align:center;color:#7a5c3a;"><div style="font-size:2rem;margin-bottom:14px;">☕</div><p style="font-family:'Lora',serif;">Fetching submissions…</p></div></div>`;
+    await load();
+    render();
+  }
+
+  function submitWorkerForm() {
+    const name  = document.getElementById('wname').value.trim();
+    const hours = document.getElementById('whours').value.trim();
+    if (!name)  { alert('Please enter your name.'); return; }
+    if (!hours || isNaN(hours) || +hours < 1) { alert('Please enter valid contract hours.'); return; }
+    state.workerName    = name;
+    state.contractHours = +hours;
+    state.dayStates     = {};
+    const existing = state.workers.find(w => w.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      (existing.unavailableDays||[]).forEach(d => state.dayStates[d] = 'unavailable');
+      Object.entries(existing.preferences||{}).forEach(([k,v]) => state.dayStates[+k] = v);
+      state.contractHours = existing.contractHours;
+    }
+    state.screen = 'worker-calendar';
+    render();
+  }
+
+  async function submitWorker() {
+    const unavailableDays = Object.entries(state.dayStates).filter(([,v])=>v==='unavailable').map(([k])=>+k);
+    const preferences = {};
+    Object.entries(state.dayStates).filter(([,v])=>v!=='unavailable').forEach(([k,v])=>preferences[+k]=v);
+    const submission = {
+      name: state.workerName,
+      contractHours: state.contractHours,
+      unavailableDays,
+      preferences,
+      submittedAt: new Date().toISOString(),
+    };
+    const idx = state.workers.findIndex(w=>w.name.toLowerCase()===state.workerName.toLowerCase());
+    if (idx>=0) state.workers[idx]=submission; else state.workers.push(submission);
+    state.screen='worker-success';
+    render();
+    await save();
+  }
+
+  async function clearAll() {
+    if (!confirm('Delete all employee submissions? This cannot be undone.')) return;
+    try {
+      const {deleteDoc} = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+      const snap = await window._fsGetDocs(window._fsCollection(window._db,'workers'));
+      await Promise.all(snap.docs.map(d=>deleteDoc(d.ref)));
+    } catch(e) { console.warn(e); }
+    state.workers=[];
+    localStorage.removeItem(STORAGE_KEY);
+    render();
+  }
+
+  /* ── Init ── */
+  async function init() {
+    document.getElementById('app').innerHTML=`<div class="screen" style="justify-content:center;align-items:center;"><div style="text-align:center;color:#7a5c3a;"><div style="font-size:2rem;margin-bottom:14px;">☕</div><p style="font-family:'Lora',serif;font-size:1.1rem;">Loading Cafe Alma…</p></div></div>`;
+    await new Promise(resolve=>{
+      if (window._fsReady) return resolve();
+      window.addEventListener('firebase-ready', resolve, {once:true});
+      setTimeout(resolve, 4000);
+    });
+    await load();
+    render();
+  }
+
+  return {
+    init, goHome, goWorker, goWorkerForm, goCalendar, goReview,
+    goEmployer, setTab, submitWorkerForm, submitWorker,
+    openPopover, closePopover, setDay,
+    clearAll, exportExcel, exportPDF,
+  };
+})();
+
+document.addEventListener('DOMContentLoaded', App.init);
+</script>
+
+<script>
+// Falling Leaves
+(function(){
+  const SHAPES=[
+    'M10 1 C5 1 1 5 1 11 C1 17 5 22 10 24 C15 22 19 17 19 11 C19 5 15 1 10 1 Z',
+    'M10 2 C4 2 1 7 1 12 C1 17 4 22 10 23 C16 22 19 17 19 12 C19 7 16 2 10 2 Z',
+    'M10 1 C7 3 2 8 2 13 C2 18 6 23 10 24 C14 23 18 18 18 13 C18 8 13 3 10 1 Z',
+  ];
+  const VEIN='M10 2 Q11 12 10 23';
+  const COLORS=[['#5a8a3c','#4a7a2c'],['#3d6b2e','#2d5b1e'],['#7aaa52','#6a9a42'],['#8a9a3a','#7a8a2a'],['#c8a040','#b89030'],['#a06030','#905020']];
+  function spawn(){
+    const el=document.createElement('div');
+    el.className='falling-leaf';
+    const [f,v]=COLORS[Math.floor(Math.random()*COLORS.length)];
+    const sh=SHAPES[Math.floor(Math.random()*SHAPES.length)];
+    const sz=16+Math.random()*18;
+    const tilt=(Math.random()-.5)*60;
+    el.innerHTML=`<svg width="${sz}" height="${sz*1.25}" viewBox="0 0 20 25" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${tilt}deg)"><path d="${sh}" fill="${f}" opacity="0.88"/><path d="${VEIN}" fill="none" stroke="${v}" stroke-width="0.7" opacity="0.55"/></svg>`;
+    el.style.left=(Math.random()*102)+'vw';
+    el.style.animationDuration=(12+Math.random()*14)+'s';
+    document.body.appendChild(el);
+    el.addEventListener('animationend',()=>el.remove());
+  }
+  document.addEventListener('DOMContentLoaded',()=>{
+    for(let i=0;i<7;i++) setTimeout(spawn,i*700);
+    setInterval(spawn,2200);
+  });
+})();
+</script>
+</body>
+</html>
