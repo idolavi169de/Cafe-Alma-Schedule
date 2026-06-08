@@ -250,6 +250,7 @@ const App = (() => {
     activeTab: 'submissions',
     selectedDay: null,
     _scheduleCache: null,
+    employerPasswordError: false,
   };
 
   /* ── Helpers ── */
@@ -419,6 +420,7 @@ const App = (() => {
     const app = document.getElementById('app');
     switch(state.screen) {
       case 'home':            app.innerHTML = renderHome(); break;
+      case 'employer-login':  app.innerHTML = renderEmployerLogin(); break;
       case 'worker-form':     app.innerHTML = renderWorkerForm(); break;
       case 'worker-calendar': app.innerHTML = renderWorkerCalendar(); break;
       case 'worker-review':   app.innerHTML = renderWorkerReview(); break;
@@ -448,7 +450,7 @@ const App = (() => {
           <p style="color:#7a5c3a;font-size:1rem;margin-top:6px;font-style:italic;">${monthLabel()}</p>
           <div class="home-actions" style="margin-top:32px;">
             <button class="btn btn-blue btn-large" onclick="App.goWorker()">👤 &nbsp; I'm an Employee</button>
-            <button class="btn btn-indigo btn-large" onclick="App.goEmployer()">🏢 &nbsp; I'm the Employer</button>
+            <button class="btn btn-indigo btn-large" onclick="App.goEmployerLogin()">🏢 &nbsp; I'm the Employer</button>
           </div>
           <p style="margin-top:22px;color:#9a8068;font-size:0.88rem;">
             ${state.workers.length} employee${state.workers.length!==1?'s':''} submitted for ${monthLabel()}
@@ -776,15 +778,44 @@ const App = (() => {
       </div>`;
   }
 
+  /* ── Employer Login ── */
+  function renderEmployerLogin() {
+    const err = state.employerPasswordError;
+    return `
+      <div class="screen" style="justify-content:center;">
+        <div class="card" style="max-width:400px;text-align:center;">
+          <div style="font-size:2.5rem;margin-bottom:16px;">🔒</div>
+          <h2 style="margin-bottom:6px;">Employer Access</h2>
+          <p style="color:#9a8068;font-size:0.88rem;margin-bottom:24px;">Enter the employer PIN to continue.</p>
+          <div class="field" style="text-align:left;">
+            <label>PIN</label>
+            <input type="password" id="empPin" placeholder="••••" maxlength="10"
+              style="letter-spacing:4px;font-size:1.2rem;text-align:center;"
+              onkeydown="if(event.key==='Enter') App.checkPassword()" />
+          </div>
+          ${err ? `<div style="background:#f5e8e4;color:#6b2010;border-radius:8px;padding:10px;margin-bottom:16px;font-size:0.87rem;">
+            ❌ Incorrect PIN — please try again.
+          </div>` : ''}
+          <button class="btn btn-indigo btn-large" onclick="App.checkPassword()">Enter →</button>
+          <button class="btn btn-ghost" style="width:100%;margin-top:10px;justify-content:center;" onclick="App.goHome()">← Back</button>
+        </div>
+      </div>`;
+  }
+
   /* ── Export Tab ── */
   function renderExport() {
     return `
       <div class="section-title">Export Options</div>
       <div style="display:flex;flex-direction:column;gap:14px;max-width:420px;">
         <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
-          <h3 style="margin-bottom:8px;">📊 Excel — Dienstplan</h3>
-          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Download a .xlsx file in Dienstplan format — ready to share on Telegram.</p>
+          <h3 style="margin-bottom:8px;">📊 Excel — Full Dienstplan</h3>
+          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">Complete schedule grid for the month — ready to share on Telegram.</p>
           <button class="btn btn-green" onclick="App.exportExcel()">⬇ Download Excel</button>
+        </div>
+        <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
+          <h3 style="margin-bottom:8px;">👤 Excel — Per Employee</h3>
+          <p style="font-size:0.87rem;color:#9a8068;margin-bottom:14px;">One sheet per employee — each person's personal schedule for the month, clearly laid out.</p>
+          <button class="btn btn-amber" onclick="App.exportPerEmployee()">⬇ Download Per Employee</button>
         </div>
         <div style="background:#f5f0e8;border-radius:12px;padding:20px;border:1px solid rgba(180,148,100,0.2);">
           <h3 style="margin-bottom:8px;">📄 PDF Report</h3>
@@ -982,8 +1013,83 @@ const App = (() => {
     render();
   }
 
+  /* ── Per-Employee Export ── */
+  function exportPerEmployee() {
+    if (typeof XLSX === 'undefined') { alert('Excel library not loaded. Check internet connection.'); return; }
+    if (!state.workers.length) { alert('No submissions yet.'); return; }
+
+    const { schedule } = generateSchedule();
+    const workingDays  = getWorkingDays();
+    const wb = XLSX.utils.book_new();
+
+    for (const worker of state.workers) {
+      const target = Math.round((worker.contractHours * 4.33) / 8);
+
+      // Build this employee's personal shift list
+      const rows = [];
+      rows.push([`Cafe Alma — ${monthLabel()}`]);
+      rows.push([`Employee: ${worker.name}`]);
+      rows.push([`Contract: ${worker.contractHours}h/week  |  Target: ~${target} shifts/month`]);
+      rows.push([]);
+      rows.push(['Date', 'Day', 'Shift', 'Arrival Time', 'Status']);
+
+      let assignedCount = 0;
+      for (const d of workingDays) {
+        const dow = getDow(d);
+        const cfg = DOW_CONFIG[dow];
+        if (!cfg || !cfg.open) continue;
+
+        const entry = schedule[d];
+        if (!entry || !entry.slots) continue;
+
+        // Find if this worker is assigned any slot this day
+        const assignedSlot = Object.entries(entry.slots).find(([,name]) => name === worker.name);
+        const isOff = (worker.unavailableDays||[]).includes(d);
+
+        if (assignedSlot) {
+          const [slotKey] = assignedSlot;
+          const slotDef = cfg.slots.find(s => s.key === slotKey);
+          rows.push([
+            `${d} ${MONTH_NAMES[tm.month]}`,
+            DAY_NAMES[dow],
+            slotDef ? slotDef.label : slotKey,
+            slotDef ? slotDef.time : '',
+            '✓ Assigned',
+          ]);
+          assignedCount++;
+        } else if (isOff) {
+          rows.push([`${d} ${MONTH_NAMES[tm.month]}`, DAY_NAMES[dow], '—', '—', 'Day Off']);
+        }
+      }
+
+      rows.push([]);
+      rows.push([`Total shifts assigned: ${assignedCount} / ${target} target`]);
+      rows.push([`Total approx. hours: ${assignedCount * 8}h`]);
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{wch:16},{wch:10},{wch:14},{wch:12},{wch:14}];
+
+      // Sanitize sheet name (Excel max 31 chars, no special chars)
+      const sheetName = worker.name.substring(0, 31).replace(/[:\\/?*[\]]/g, '');
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
+    XLSX.writeFile(wb, `schedule-per-employee-${tm.year}-${String(tm.month+1).padStart(2,'0')}.xlsx`);
+  }
+
   /* ── Navigation ── */
-  function goHome()       { state.screen = 'home'; render(); }
+  function goHome()         { state.screen = 'home'; render(); }
+  function goEmployerLogin(){ state.employerPasswordError = false; state.screen = 'employer-login'; render(); }
+  function checkPassword()  {
+    const pin = (document.getElementById('empPin')?.value || '').trim();
+    if (pin === '1234') {
+      state.employerPasswordError = false;
+      goEmployer();
+    } else {
+      state.employerPasswordError = true;
+      render();
+    }
+  }
   function goWorker()     { state.workerName=''; state.contractHours=''; state.dayStates={}; state.screen='worker-form'; render(); }
   function goWorkerForm() { state.screen='worker-form'; render(); }
   function goCalendar()   { state.screen='worker-calendar'; render(); }
@@ -1059,9 +1165,10 @@ const App = (() => {
 
   return {
     init, goHome, goWorker, goWorkerForm, goCalendar, goReview,
-    goEmployer, setTab, submitWorkerForm, submitWorker,
+    goEmployerLogin, goEmployer, checkPassword, setTab,
+    submitWorkerForm, submitWorker,
     openPopover, closePopover, setDay,
-    clearAll, exportExcel, exportPDF,
+    clearAll, exportExcel, exportPerEmployee, exportPDF,
   };
 })();
 
