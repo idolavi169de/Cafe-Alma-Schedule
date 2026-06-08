@@ -410,7 +410,9 @@ const App = (() => {
       contractHours: w.contractHours,
       unavail,
       prefs: w.preferences || {},
-      target: Math.round((w.contractHours * AVG_WEEKS) / SHIFT_HOURS),
+      target: w.workerType === 'occasional'
+        ? (w.availableDays || []).length
+        : Math.round((w.contractHours * AVG_WEEKS) / SHIFT_HOURS),
       assigned: 0,
       days: new Set(),
       byType: {}, // tracks count per slot family for fair distribution
@@ -585,11 +587,6 @@ const App = (() => {
             <input type="text" id="wname" placeholder="e.g. Ana" value="${state.workerName}" />
           </div>
           <div class="field">
-            <label>Contract Hours <span style="font-weight:400;color:#9a8068;">(per week)</span></label>
-            <input type="number" id="whours" min="1" max="60" placeholder="e.g. 32" value="${state.contractHours}" />
-            <div class="hint">Used to fairly distribute shifts across the month.</div>
-          </div>
-          <div class="field">
             <label>How often do you work?</label>
             <div class="type-toggle">
               <button class="type-btn ${state.workerType==='regular'?'active':''}" onclick="App.selectWorkerType('regular')">
@@ -600,6 +597,12 @@ const App = (() => {
               </button>
             </div>
           </div>
+          ${state.workerType === 'regular' ? `
+          <div class="field">
+            <label>Contract Hours <span style="font-weight:400;color:#9a8068;">(per week)</span></label>
+            <input type="number" id="whours" min="1" max="60" placeholder="e.g. 32" value="${state.contractHours}" />
+            <div class="hint">Used to fairly distribute shifts across the month.</div>
+          </div>` : ''}
           <div style="display:flex;justify-content:flex-end;margin-top:8px;">
             <button class="btn btn-blue" onclick="App.submitWorkerForm()">Continue →</button>
           </div>
@@ -766,7 +769,7 @@ const App = (() => {
           <h2 style="margin-bottom:16px;">Review & Submit</h2>
           <div class="summary-row"><span style="color:#9a8068;">Name</span><strong>${state.workerName}</strong></div>
           <div class="summary-row"><span style="color:#9a8068;">Type</span><strong>${isOcc ? '🌟 Occasional' : '📅 Regular'}</strong></div>
-          <div class="summary-row"><span style="color:#9a8068;">Contract</span><strong>${state.contractHours}h/week (~${target} shifts/month)</strong></div>
+          <div class="summary-row"><span style="color:#9a8068;">Contract</span><strong>${isOcc ? 'Occasional — no fixed hours' : state.contractHours + 'h/week (~' + target + ' shifts/month)'}</strong></div>
           ${reviewRows}
           <div style="background:#eef5e8;border-radius:10px;padding:14px;margin-top:20px;font-size:0.85rem;color:#2a4a1c;border:1px solid rgba(61,107,46,0.15);">
             ℹ️ ${note}
@@ -1636,11 +1639,13 @@ const App = (() => {
 
   function submitWorkerForm() {
     const name  = document.getElementById('wname').value.trim();
-    const hours = document.getElementById('whours').value.trim();
+    const isOccForm = state.workerType === 'occasional';
+    const hoursEl = document.getElementById('whours');
+    const hours = hoursEl ? hoursEl.value.trim() : '0';
     if (!name)  { alert('Please enter your name.'); return; }
-    if (!hours || isNaN(hours) || +hours < 1) { alert('Please enter valid contract hours.'); return; }
+    if (!isOccForm && (!hours || isNaN(hours) || +hours < 1)) { alert('Please enter valid contract hours.'); return; }
     state.workerName    = name;
-    state.contractHours = +hours;
+    state.contractHours = isOccForm ? 0 : +hours;
     state.dayStates     = {};
     const existing = state.workers.find(w => w.name.toLowerCase() === name.toLowerCase());
     if (existing) {
