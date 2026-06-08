@@ -169,6 +169,52 @@ tr:hover td { background:#f5f0e5; }
 }
 
 @media print { .topbar,.tab-bar,.btn,button { display:none !important; } body { background:white; } .card { box-shadow:none; } }
+
+/* ── Mobile ── */
+@media (max-width: 600px) {
+  .screen { padding: 14px 10px; }
+  .card { padding: 20px 16px; }
+  .card-wide { padding: 18px 12px; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.05rem; }
+
+  .topbar { padding: 11px 14px; font-size: 0.88rem; gap: 8px; }
+  .topbar .back-btn { padding: 5px 10px; font-size: 0.78rem; }
+
+  .btn-large { padding: 15px 18px; font-size: 0.98rem; }
+  .btn { padding: 10px 16px; font-size: 0.88rem; }
+
+  .calendar-grid { gap: 3px; }
+  .day-cell { min-height: 36px; font-size: 0.75rem; border-radius: 7px; }
+  .day-label { font-size: 0.46rem; }
+  .day-header { font-size: 0.65rem; padding: 4px 0; }
+
+  .step span { display: none; }
+  .step-line { min-width: 12px; }
+  .steps { margin-bottom: 20px; }
+
+  .tab { padding: 8px 10px; font-size: 0.76rem; }
+  .tab-bar { margin-bottom: 20px; }
+
+  .summary-row { flex-direction: column; gap: 5px; align-items: flex-start; }
+
+  #popover {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 86vw !important;
+    max-width: 300px !important;
+  }
+
+  table { font-size: 0.75rem; }
+  th, td { padding: 6px 5px; }
+  .td-label { font-size: 0.72rem; }
+
+  .home-icon svg { width: 66px !important; height: 72px !important; }
+  .conflict-card { padding: 14px 14px; }
+  .field { margin-bottom: 18px; }
+}
 </style>
 </head>
 <body>
@@ -1026,13 +1072,19 @@ const App = (() => {
     pop.classList.add('visible');
     ov.classList.add('visible');
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    let left = rect.left + window.scrollX;
-    let top  = rect.bottom + 6 + window.scrollY;
-    if (left + 230 > window.innerWidth) left = window.innerWidth - 240;
-    if (top + 280 > window.innerHeight + window.scrollY) top = rect.top + window.scrollY - 280;
-    pop.style.left = left + 'px';
-    pop.style.top  = top  + 'px';
+    if (window.innerWidth <= 600) {
+      // On mobile: CSS handles centering via transform, just clear any prior inline positions
+      pop.style.left = ''; pop.style.top = ''; pop.style.transform = '';
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      let left = rect.left + window.scrollX;
+      let top  = rect.bottom + 6 + window.scrollY;
+      if (left + 230 > window.innerWidth) left = window.innerWidth - 240;
+      if (top + 280 > window.innerHeight + window.scrollY) top = rect.top + window.scrollY - 280;
+      pop.style.left = left + 'px';
+      pop.style.top  = top  + 'px';
+      pop.style.transform = '';
+    }
   }
 
   function closePopover() {
