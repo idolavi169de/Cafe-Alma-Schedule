@@ -1111,10 +1111,9 @@ const App = (() => {
     const workingDays = getWorkingDays();
     const ml = monthLabel();
 
-    // Group working days into calendar weeks (Mon–Sun)
     function weekKey(d) {
       const dow = getDow(d);
-      const monIdx = (dow + 6) % 7; // Mon=0 … Sun=6
+      const monIdx = (dow + 6) % 7;
       return d - monIdx;
     }
     const weekMap = new Map();
@@ -1137,7 +1136,7 @@ const App = (() => {
         const bg  = cfg.baking ? '#fff0b0' : cfg.weekend ? '#dcefd4' : '#3d6b2e';
         const col = cfg.baking ? '#7a4e10' : cfg.weekend ? '#2a4a1c' : '#ffffff';
         return `<th style="background:${bg};color:${col};padding:8px 6px;text-align:center;min-width:90px;">
-          <div style="font-size:9px;font-weight:600;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;">${DAY_NAMES[dow]}</div>
+          <div style="font-size:9px;font-weight:600;opacity:0.8;text-transform:uppercase;">${DAY_NAMES[dow]}</div>
           <div style="font-size:17px;font-weight:700;margin-top:2px;">${d}</div>
         </th>`;
       }).join('');
@@ -1190,7 +1189,7 @@ const App = (() => {
         : (origWorker?.unavailableDays||[]).length + ' off';
       const shiftMix = [
         earlyCount  ? `🌅 ${earlyCount}` : '',
-        lateCount   ? `🌆 ${lateCount}`  : '',
+        lateCount   ? `🏙 ${lateCount}`  : '',
         bakingCount ? `🥐 ${bakingCount}` : '',
       ].filter(Boolean).join('  ');
       return `<tr style="border-bottom:1px solid #e8e0d0;">
@@ -1207,20 +1206,19 @@ const App = (() => {
 
     const conflictSection = conflicts.length
       ? `<div style="margin-top:22px;">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#8b3a2a;margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #e8d0c8;">⚠️ Conflicts (${conflicts.length})</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8b3a2a;margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #e8d0c8;">⚠️ Conflicts (${conflicts.length})</div>
           <table style="width:100%;border-collapse:collapse;">
             <thead><tr>
-              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Day</th>
-              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Employee</th>
-              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Preferred Shift</th>
-              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;text-align:center;">Reason</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;">Day</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;">Employee</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;">Preferred Shift</th>
+              <th style="background:#8b3a2a;color:white;padding:6px 8px;font-size:9px;">Reason</th>
             </tr></thead>
-            <tbody>
-              ${conflicts.map(c=>`<tr>
-                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;text-align:center;">${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;font-weight:700;text-align:center;">${c.worker}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;text-align:center;">${slotLabel(c.preferredSlot)}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:9px;color:#8b3a2a;text-align:center;">${c.reason==='streak'?'5-day rule':'All slots taken'}</td>
+            <tbody>${conflicts.map(c=>`<tr>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;">${DAY_NAMES[getDow(c.day)]} ${c.day} ${MONTH_NAMES[tm.month]}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;font-weight:700;">${c.worker}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:10px;">${slotLabel(c.preferredSlot)}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #f0e4e0;font-size:9px;color:#8b3a2a;">${c.reason==='streak'?'5-day rule':'All slots taken'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -1235,16 +1233,13 @@ const App = (() => {
       @page{size:A4 portrait;margin:12mm 12mm;}
       @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
     </style></head><body>
-
     ${weekPages}
-
     <div>
       <div style="background:linear-gradient(135deg,#2a4a1c,#3d6b2e);color:white;padding:18px 20px;border-radius:6px;margin-bottom:20px;">
         <div style="font-size:16px;font-weight:700;margin-bottom:3px;">☕ Cafe Alma — Monthly Summary</div>
         <div style="font-size:11px;opacity:0.75;">${ml} · Generated ${new Date().toLocaleDateString()}</div>
       </div>
-
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#7a5c3a;margin-bottom:10px;padding-bottom:5px;border-bottom:2px solid #d4c9b0;">Employee Overview</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#7a5c3a;margin-bottom:10px;padding-bottom:5px;border-bottom:2px solid #d4c9b0;">Employee Overview</div>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr>
           <th style="background:#3d6b2e;color:white;padding:7px 8px;text-align:left;font-size:9px;">Employee</th>
@@ -1258,16 +1253,13 @@ const App = (() => {
         </tr></thead>
         <tbody>${summaryRows}</tbody>
       </table>
-
       ${conflictSection}
-
       <div style="margin-top:20px;font-size:8px;color:#9a8068;text-align:center;border-top:1px solid #e8e0d0;padding-top:10px;">
         Cafe Alma Shift Scheduler · ${new Date().toLocaleDateString()}
       </div>
     </div>
-
     <script>window.onload=function(){window.print();}<\/script>
-    </body></html>\`;
+    </body></html>`;
 
     const win = window.open('', '_blank');
     if (!win) { alert('Please allow pop-ups for this page.'); return; }
